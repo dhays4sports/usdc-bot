@@ -45,9 +45,10 @@ export default function CreateEscrowPage() {
     });
 
     if (!publicClient) {
-  setNotice({ type: "err", msg: "Client not ready. Refresh the page and try again." });
+  alert("Client not ready. Refresh the page and try again.");
   return;
 }
+
 const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
 
