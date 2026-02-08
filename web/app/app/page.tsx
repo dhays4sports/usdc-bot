@@ -49,6 +49,7 @@ export default function CreateEscrowPage() {
   return;
 }
 
+
 const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
 
