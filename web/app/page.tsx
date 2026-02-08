@@ -23,6 +23,16 @@ export default function Home() {
           </a>
         </div>
 
+<p style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+  <a
+    href={`https://basescan.org/address/${process.env.NEXT_PUBLIC_COORDINATOR}#code`}
+    target="_blank"
+    rel="noreferrer"
+  >
+    Verified on Basescan
+  </a>
+</p>
+
         <hr style={{ margin: "26px 0", opacity: 0.2 }} />
 
         <div style={{ display: "grid", gap: 14, maxWidth: 860 }}>
