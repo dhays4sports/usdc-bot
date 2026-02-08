@@ -1,0 +1,25 @@
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Node / Next
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+web/.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Foundry / Solidity
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+
+# Misc
+**/*.log
