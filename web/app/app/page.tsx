@@ -44,7 +44,12 @@ export default function CreateEscrowPage() {
       args: [beneficiary as `0x${string}`, amount6, BigInt(deadlineTs), memoHash],
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    if (!publicClient) {
+  setNotice({ type: "err", msg: "Client not ready. Refresh the page and try again." });
+  return;
+}
+const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
 
     // Extract escrow id from EscrowCreated event
     const logs = parseEventLogs({

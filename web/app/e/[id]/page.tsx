@@ -90,9 +90,10 @@ export default function ReceiptPage() {
   });
 
   async function wait(txHash: `0x${string}`) {
-    await publicClient.waitForTransactionReceipt({ hash: txHash });
-    await refetch();
-  }
+  if (!publicClient) throw new Error("Client not ready. Refresh and try again.");
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  await refetch();
+}
 
   // Step 3: copy helper + feedback banner via busy
   async function copy(text: string) {
