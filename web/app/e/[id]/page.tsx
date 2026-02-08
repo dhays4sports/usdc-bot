@@ -191,7 +191,7 @@ export default function ReceiptPage() {
     }
   }
 
-  const allowanceOk = amount ? (allowance ?? 0n) >= amount : false;
+  const allowanceOk = amount ? (allowance ?? BigInt(0)) >= amount : false;
 
   return (
     <>
