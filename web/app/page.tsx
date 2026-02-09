@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Header from "@/components/Header";
 
-const BASESCAN = "https://sepolia.basescan.org";
+const BASESCAN = "https://basescan.org";
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
 export default function Home() {
