@@ -8,52 +8,156 @@ export default function Home() {
   return (
     <>
       <Header />
-      <main style={{ padding: 32, maxWidth: 980, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 44, marginBottom: 8 }}>usdc.bot</h1>
-        <p style={{ fontSize: 18, opacity: 0.8, maxWidth: 720 }}>
-          A neutral command surface for USDC escrow receipts on Base.
-          Create an escrow, share a receipt link, and settle with on-chain finality.
-        </p>
 
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
-          <Link href="/app"><button>Create escrow</button></Link>
-          <Link href="/docs"><button>Read docs</button></Link>
-          <a href={`${BASESCAN}/address/${COORD}`} target="_blank" rel="noreferrer">
-            <button>View contract</button>
-          </a>
-        </div>
+      <main className="container">
+        <div className="centerStage" style={{ flexDirection: "column", gap: 16 }}>
 
-<p style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-  <a
-    href={`https://basescan.org/address/${process.env.NEXT_PUBLIC_COORDINATOR}#code`}
-    target="_blank"
-    rel="noreferrer"
+          {/* Glass receipt hero */}
+          <div className="glassCard">
+            <div className="cardTitle">ESCROW RECEIPT</div>
+
+            <p className="huge">
+              $100 <span style={{ fontSize: 18, opacity: 0.9 }}>USDC</span>
+            </p>
+
+            <div className="divider" />
+
+            <div className="subrow">
+              <span>Status</span>
+              <span className="pillOk">Released</span>
+            </div>
+
+            <div className="divider" />
+
+            <div className="subrow">
+              <span>Network</span>
+              <span>Base Mainnet</span>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+  <div className="brand" style={{ marginTop: 0 }}>usdc.bot</div>
+
+  <span
+    style={{
+      fontSize: 12,
+      padding: "6px 10px",
+      borderRadius: 999,
+      background: "rgba(255,255,255,.06)",
+      border: "1px solid rgba(255,255,255,.10)",
+      opacity: 0.9,
+    }}
   >
-    Verified on Basescan
-  </a>
-</p>
+    v1 / experimental
+  </span>
 
-        <hr style={{ margin: "26px 0", opacity: 0.2 }} />
+  <span
+    style={{
+      fontSize: 12,
+      padding: "6px 10px",
+      borderRadius: 999,
+      background: "rgba(255,255,255,.06)",
+      border: "1px solid rgba(255,255,255,.10)",
+      opacity: 0.9,
+    }}
+  >
+    Base Mainnet
+  </span>
+</div>
 
-        <div style={{ display: "grid", gap: 14, maxWidth: 860 }}>
-          <h2 style={{ marginBottom: 0 }}>What it does</h2>
-          <ul style={{ marginTop: 0, lineHeight: 1.6 }}>
-            <li><b>Create</b> an escrow with beneficiary, amount, and deadline.</li>
-            <li><b>Share</b> a verifiable receipt link <code>/e/[id]</code>.</li>
-            <li><b>Approve + fund</b> with native USDC.</li>
-            <li><b>Release</b> to the beneficiary, or <b>refund</b> after deadline.</li>
-          </ul>
+          <div className="tagline" style={{ maxWidth: 640, textAlign: "center" }}>
+            A neutral command surface for USDC escrow receipts on Base.
+            Create an escrow, share a receipt link, and settle with on-chain finality.
+          </div>
 
-          <h2 style={{ marginBottom: 0 }}>Why it matters</h2>
-          <ul style={{ marginTop: 0, lineHeight: 1.6 }}>
-            <li>Not another wallet. Not a siloed app. It’s a <b>composable primitive</b>.</li>
-            <li>Receipts are a trust layer for <b>agent-to-agent</b> and <b>agent-to-human</b> commerce.</li>
-            <li>Simple UX, contract-first design, no backend required for the core flow.</li>
-          </ul>
+          {/* Primary actions */}
+          <div
+            style={{
+              display: "flex",
+              gap: 16,
+              flexWrap: "wrap",
+              marginTop: 10,
+              justifyContent: "center",
+            }}
+          >
+            <Link href="/app" className="underline">
+              Create escrow
+            </Link>
 
-          <p style={{ fontSize: 12, opacity: 0.75 }}>
-            Current network: Base Mainnet 
+            <Link href="/docs" className="underline">
+              Read docs
+            </Link>
+
+            <a
+              href={`${BASESCAN}/address/${COORD}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              View contract
+            </a>
+          </div>
+
+          {/* Trust signal */}
+          <p style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+            <a
+              href={`${BASESCAN}/address/${COORD}#code`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              Verified on Basescan
+            </a>
           </p>
+
+          {/* Divider */}
+          <div className="divider" style={{ width: "100%", maxWidth: 860 }} />
+
+          {/* Content sections */}
+          <div
+            style={{
+              display: "grid",
+              gap: 18,
+              maxWidth: 860,
+              fontSize: 15,
+              lineHeight: 1.65,
+            }}
+          >
+            <div>
+              <h2 style={{ marginBottom: 6 }}>What it does</h2>
+              <ul style={{ marginTop: 0 }}>
+                <li><b>Create</b> an escrow with beneficiary, amount, and deadline.</li>
+                <li><b>Share</b> a verifiable receipt link <code>/e/[id]</code>.</li>
+                <li><b>Approve + fund</b> with native USDC.</li>
+                <li><b>Release</b> to the beneficiary, or <b>refund</b> after deadline.</li>
+              </ul>
+            </div>
+
+            <div>
+              <h2 style={{ marginBottom: 6 }}>Why it matters</h2>
+              <ul style={{ marginTop: 0 }}>
+                <li>
+                  Not another wallet. Not a siloed app. It’s a <b>composable primitive</b>.
+                </li>
+                <li>
+                  Receipts are a trust layer for <b>agent-to-agent</b> and{" "}
+                  <b>agent-to-human</b> commerce.
+                </li>
+                <li>
+                  Simple UX, contract-first design, no backend required for the core flow.
+                </li>
+              </ul>
+            </div>
+
+            <p style={{ fontSize: 12, opacity: 0.7 }}>
+              Current network: <b>Base Mainnet</b>
+            </p>
+
+            <p style={{ fontSize: 12, opacity: 0.55 }}>
+              usdc.bot is an independent project and is not affiliated with Circle,
+              USDC, or Coinbase.
+            </p>
+          </div>
         </div>
       </main>
     </>
