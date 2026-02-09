@@ -197,8 +197,11 @@ export default function ReceiptPage() {
     <>
       <Header />
       <ExperimentalBanner />
-      <main style={{ padding: 32, maxWidth: 860 }}>
-        <h1>Escrow #{id}</h1>
+      <main style={{ padding: 32, maxWidth: 860, margin: "0 auto" }}>
+        <h1>Escrow Receipt</h1>
+<p style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
+  Permanent, verifiable receipt on Base mainnet.
+</p>
 
         {/* Step 3: copy buttons near top */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
@@ -253,6 +256,30 @@ export default function ReceiptPage() {
             <b>Your USDC:</b> {usdcBal ? formatUnits(usdcBal, 6) : "-"} •{" "}
             <b>Allowance:</b> {allowance ? formatUnits(allowance, 6) : "-"} (needs ≥ amount)
           </div>
+        </div>
+
+        {/* Verify (contract + latest tx) */}
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: "1px solid rgba(255,255,255,0.12)",
+            display: "flex",
+            gap: 14,
+            flexWrap: "wrap",
+            fontSize: 13,
+            opacity: 0.9,
+          }}
+        >
+          <a className="underline" href={addrUrl(COORD)} target="_blank" rel="noreferrer">
+            Verified contract on Basescan
+          </a>
+
+          {lastTx && (
+            <a className="underline" href={txUrl(lastTx)} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          )}
         </div>
 
         <hr style={{ margin: "18px 0", opacity: 0.2 }} />
