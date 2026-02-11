@@ -4,6 +4,7 @@ import { newId } from "@/lib/remitId";
 import type { RemittanceRecord } from "@/lib/remitTypes";
 
 const KEY = (id: string) => `remit:${id}`;
+const asHexAddress = (v: string) => v as `0x${string}`;
 
 export async function POST(req: Request) {
   try {
@@ -17,6 +18,17 @@ export async function POST(req: Request) {
     const memoStr = String(body.memo ?? "").trim();
     const recipientInputStr = String(body.recipientInput ?? "").trim();
 
+    // Minimal validation (do this before building `rec`)
+    if (!amountStr || isNaN(Number(amountStr))) {
+      return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+    }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)) {
+      return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
+    }
+    if (memoStr && memoStr.length > 180) {
+      return NextResponse.json({ error: "Memo too long" }, { status: 400 });
+    }
+
     const rec: RemittanceRecord = {
       id,
       createdAt,
@@ -27,23 +39,12 @@ export async function POST(req: Request) {
       amount: amountStr,
       recipient: {
         input: recipientInputStr,
-        address: recipientAddress,
+        address: asHexAddress(recipientAddress),
       },
       memo: memoStr,
       reference: body.reference ? String(body.reference) : undefined,
       settlement: body.settlement ?? undefined,
     };
-
-    // Minimal validation
-    if (!rec.amount || isNaN(Number(rec.amount))) {
-      return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
-    }
-    if (!/^0x[a-fA-F0-9]{40}$/.test(rec.recipient.address)) {
-      return NextResponse.json({ error: "Invalid recipient address" }, { status: 400 });
-    }
-    if (rec.memo && rec.memo.length > 180) {
-      return NextResponse.json({ error: "Memo too long" }, { status: 400 });
-    }
 
     await kv.set(KEY(id), rec);
 
