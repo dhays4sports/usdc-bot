@@ -2,11 +2,11 @@
 
 import ExperimentalBanner from "@/components/ExperimentalBanner";
 import Header from "@/components/Header";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { coordinatorAbi } from "@/lib/abi";
 import { isAddress, keccak256, parseEventLogs, parseUnits, toHex } from "viem";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as `0x${string}`;
 
@@ -15,8 +15,17 @@ const BASESCAN = "https://basescan.org";
 const txUrl = (h?: string) => (h ? `${BASESCAN}/tx/${h}` : "#");
 const addrUrl = (a?: string) => (a ? `${BASESCAN}/address/${a}` : "#");
 
+function safeDecode(s: string) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export default function CreateEscrowPage() {
   const router = useRouter();
+  const sp = useSearchParams();
   const publicClient = usePublicClient();
   const { isConnected } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
@@ -25,13 +34,28 @@ export default function CreateEscrowPage() {
   const [amount, setAmount] = useState("1.00");
   const [deadline, setDeadline] = useState("");
   const [memo, setMemo] = useState("");
+  const [returnUrl, setReturnUrl] = useState("");
 
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [lastTx, setLastTx] = useState<`0x${string}` | null>(null);
 
+  // Prefill from query params once on mount
+  useEffect(() => {
+    const b = sp.get("beneficiary");
+    const a = sp.get("amount");
+    const m = sp.get("memo");
+    const r = sp.get("return");
+
+    if (b) setBeneficiary(safeDecode(b));
+    if (a) setAmount(safeDecode(a));
+    if (m) setMemo(safeDecode(m));
+    if (r) setReturnUrl(safeDecode(r));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const memoHash = useMemo(() => {
-    const m = memo.trim();
-    return m.length ? keccak256(toHex(m)) : ("0x" + "0".repeat(64)) as `0x${string}`;
+    const mm = memo.trim();
+    return mm.length ? keccak256(toHex(mm)) : ("0x" + "0".repeat(64)) as `0x${string}`;
   }, [memo]);
 
   async function onCreate() {
@@ -80,7 +104,10 @@ export default function CreateEscrowPage() {
 
       const id = logs[0].args.id;
       setNotice({ type: "ok", msg: `Escrow created (#${id.toString()}). Redirecting...` });
-      router.push(`/e/${id.toString()}`);
+
+      // Preserve return param for the receipt page to optionally link back to remit.bot
+      const qs = returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : "";
+      router.push(`/e/${id.toString()}${qs}`);
     } catch (e: any) {
       const msg = e?.shortMessage || e?.message || "Transaction failed or was rejected.";
       setNotice({ type: "err", msg });
@@ -125,7 +152,7 @@ export default function CreateEscrowPage() {
               style={{ width: "100%" }}
               value={beneficiary}
               onChange={(e) => setBeneficiary(e.target.value)}
-              placeholder="0x..."
+              placeholder="0x... or (later) name.eth"
             />
           </label>
 
@@ -158,6 +185,16 @@ export default function CreateEscrowPage() {
               placeholder="What is this escrow for?"
             />
           </label>
+
+          {/* optional: show return state so you can verify the handoff */}
+          {returnUrl ? (
+            <p style={{ fontSize: 12, opacity: 0.75, marginTop: -4 }}>
+              Return after escrow:{" "}
+              <a className="underline" href={returnUrl} target="_blank" rel="noreferrer">
+                {returnUrl}
+              </a>
+            </p>
+          ) : null}
 
           <button onClick={onCreate} disabled={isPending}>
             {isPending ? "Submitting..." : "Create escrow"}

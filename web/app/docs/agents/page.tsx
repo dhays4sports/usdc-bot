@@ -1,4 +1,4 @@
-export default function AgentDocs() {
+export default function AgentDocsPage() {
   const coord = process.env.NEXT_PUBLIC_COORDINATOR;
 
   return (
@@ -14,16 +14,12 @@ export default function AgentDocs() {
 
         <h2 style={{ marginTop: 24 }}>Contract</h2>
         <ul style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.8 }}>
-          <li>Network: <b>Base mainnet</b></li>
+          <li>
+            Network: <b>Base mainnet</b>
+          </li>
           <li>
             USDCCoordinator:{" "}
-            {coord ? (
-              <code>{coord}</code>
-            ) : (
-              <span style={{ opacity: 0.8 }}>
-                (set <code>NEXT_PUBLIC_COORDINATOR</code>)
-              </span>
-            )}
+            {coord ? <code>{coord}</code> : <span>(missing NEXT_PUBLIC_COORDINATOR)</span>}
           </li>
         </ul>
 
@@ -32,9 +28,15 @@ export default function AgentDocs() {
           Agents only need three calls:
         </p>
         <ul style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.8 }}>
-          <li><code>createEscrow(beneficiary, amount, deadline)</code></li>
-          <li><code>releaseEscrow(escrowId)</code></li>
-          <li><code>refundEscrow(escrowId)</code></li>
+          <li>
+            <code>createEscrow(beneficiary, amount, deadline, memoHash)</code>
+          </li>
+          <li>
+            <code>releaseEscrow(escrowId)</code>
+          </li>
+          <li>
+            <code>refundEscrow(escrowId)</code>
+          </li>
         </ul>
 
         <p style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
@@ -74,14 +76,6 @@ export default function AgentDocs() {
           <li>Receipt URL is shared as proof of settlement</li>
         </ol>
 
-        <h2 style={{ marginTop: 24 }}>Notes for automation</h2>
-        <ul style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.8 }}>
-          <li>usdc.bot is contract-first</li>
-          <li>Relayers are optional</li>
-          <li>Gas abstraction is external</li>
-          <li>Authorization extensions are composable</li>
-        </ul>
-
         <h2 style={{ marginTop: 24 }}>Scope</h2>
         <p style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
           usdc.bot does not judge task completion, manage identities, interpret intent, or store off-chain state.
@@ -92,3 +86,4 @@ export default function AgentDocs() {
     </div>
   );
 }
+
