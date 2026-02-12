@@ -1,17 +1,27 @@
-export async function resolveNameToAddress(input: string): Promise<
-  | { ok: true; address: `0x${string}`; label?: string }
+export async function resolveNameToAddress(
+  input: string
+): Promise<
+  | { ok: true; address: `0x${string}`; label?: string; avatarUrl?: string | null }
   | { ok: false; message: string }
 > {
   const v = input.trim();
+  if (!v) return { ok: false, message: "Enter a wallet address or name." };
 
-  // If it's already an address, accept it
-  if (/^0x[a-fA-F0-9]{40}$/.test(v)) {
-    return { ok: true, address: v as `0x${string}` };
+  try {
+    const res = await fetch(`/api/resolve-name?input=${encodeURIComponent(v)}`, {
+      cache: "no-store",
+    });
+
+    const json = await res.json();
+    if (!json?.ok) return { ok: false, message: json?.message || "Could not resolve." };
+
+    return {
+      ok: true,
+      address: json.address as `0x${string}`,
+      label: json.label,
+      avatarUrl: json.avatarUrl ?? null,
+    };
+  } catch {
+    return { ok: false, message: "Resolver unavailable. Try again." };
   }
-
-  // MVV: ENS/Basenames can be added later
-  return {
-    ok: false,
-    message: "Name resolution not enabled yet. Paste a 0x address for now.",
-  };
 }

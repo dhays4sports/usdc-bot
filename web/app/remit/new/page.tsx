@@ -1,63 +1,88 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { resolveNameToAddress } from "../../../lib/nameResolve"; // you already created this earlier
 import Link from "next/link";
 import Header from "@/components/Header";
+import { resolveNameToAddress } from "@/lib/nameResolve";
+
+function parseSettlement(inputRaw: string) {
+  const input = inputRaw.trim();
+  if (!input) return undefined;
+
+  // usdc.bot receipt link
+  if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(input)) {
+    return { type: "usdc_bot_receipt", value: input };
+  }
+
+  // basescan tx url -> extract hash
+  if (input.includes("basescan.org/tx/")) {
+    const parts = input.split("/tx/");
+    const hash = parts[1]?.split("?")[0]?.trim();
+    if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      return { type: "basescan_tx", value: hash };
+    }
+  }
+
+  // raw tx hash
+  if (/^0x[a-fA-F0-9]{64}$/.test(input)) {
+    return { type: "basescan_tx", value: input };
+  }
+
+  return undefined;
+}
 
 export default function NewRemit() {
   const [recipientInput, setRecipientInput] = useState("");
   const [recipientAddress, setRecipientAddress] = useState<string | null>(null);
-  const [resolveMsg, setResolveMsg] = useState<string>("Enter a wallet address or name.");
+  const [resolveMsg, setResolveMsg] = useState("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [amount, setAmount] = useState("10");
   const [memo, setMemo] = useState("");
   const [reference, setReference] = useState("");
-  const [settlement, setSettlement] = useState(""); // optional link or tx
+
+  const [settlement, setSettlement] = useState(""); // optional proof
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => {
-    return !!recipientAddress && !!amount && !isNaN(Number(amount)) && memo.length <= 180;
+    return (
+      !!recipientAddress &&
+      !!amount &&
+      !isNaN(Number(amount)) &&
+      Number(amount) > 0 &&
+      memo.length <= 180
+    );
   }, [recipientAddress, amount, memo]);
 
   async function onResolve() {
     setErr(null);
     const v = recipientInput.trim();
+
     if (!v) {
       setRecipientAddress(null);
+      setAvatarUrl(null);
       setResolveMsg("Enter a wallet address or name.");
       return;
     }
-    setResolveMsg("Resolving name…");
-    const r = await resolveNameToAddress(v);
-    if (r.ok) {
-      setRecipientAddress(r.address);
-      setResolveMsg(`Resolves to ${r.address.slice(0, 6)}…${r.address.slice(-4)}`);
-    } else {
+
+    setResolveMsg("Resolving…");
+    try {
+      const r = await resolveNameToAddress(v);
+      if (r.ok) {
+  setRecipientAddress(r.address);
+  setAvatarUrl(r.avatarUrl ?? null);
+
+  const label = r.label ? `${r.label} → ` : "";
+  setResolveMsg(`${label}${r.address.slice(0, 6)}…${r.address.slice(-4)}`);
+} else {
+  setRecipientAddress(null);
+  setAvatarUrl(null);
+  setResolveMsg(r.message);
+}
+    } catch {
       setRecipientAddress(null);
-      setResolveMsg(r.message);
+      setResolveMsg("Could not resolve. Try a 0x address.");
     }
-  }
-
-  function parseSettlement(input: string) {
-    const v = input.trim();
-    if (!v) return null;
-
-    if (v.includes("usdc.bot/e/")) {
-      return { type: "usdc_bot_receipt", value: v };
-    }
-    // If user pastes tx hash
-    if (/^0x[a-fA-F0-9]{64}$/.test(v)) {
-      return { type: "tx_hash", value: v };
-    }
-    // If user pastes basescan tx url
-    if (v.includes("basescan.org/tx/")) {
-      const parts = v.split("/tx/");
-      const hash = parts[1]?.split("?")[0]?.trim();
-      if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) return { type: "tx_hash", value: hash };
-    }
-    // Otherwise store nothing (MVV keeps it simple)
-    return null;
   }
 
   async function onCreate() {
@@ -72,16 +97,16 @@ export default function NewRemit() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          recipientInput,
+          recipientInput: recipientInput.trim(),
           recipientAddress,
-          amount,
-          memo,
+          amount: amount.trim(),
+          memo: memo.trim(),
           reference: reference.trim() || undefined,
-          settlement: settlementObj || undefined,
+          settlement: settlementObj,
         }),
       });
 
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed");
 
       window.location.href = `/remit/r/${json.id}`;
@@ -110,6 +135,27 @@ export default function NewRemit() {
                   placeholder="0x… or vitalik.eth"
                 />
                 <div style={{ fontSize: 12, opacity: 0.7 }}>{resolveMsg}</div>
+<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+  {avatarUrl ? (
+    <img
+      src={avatarUrl}
+      alt=""
+      width={22}
+      height={22}
+      style={{ borderRadius: 999, opacity: 0.95 }}
+    />
+  ) : (
+    <div
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 999,
+        background: "rgba(255,255,255,0.08)",
+        border: "1px solid rgba(255,255,255,0.10)",
+      }}
+    />
+  )}
+</div>
               </label>
 
               <label style={{ display: "grid", gap: 6 }}>
@@ -140,14 +186,14 @@ export default function NewRemit() {
                 <input
                   value={settlement}
                   onChange={(e) => setSettlement(e.target.value)}
-                  placeholder="Paste usdc.bot receipt URL or tx hash"
+                  placeholder="Paste tx hash or usdc.bot receipt"
                 />
                 <div style={{ fontSize: 12, opacity: 0.6 }}>
-                  If blank, status will be “Proposed”.
+                  If blank, status stays “Proposed” and you can link proof later.
                 </div>
               </label>
 
-              {err ? <div style={{ fontSize: 12, opacity: 0.8 }}>Error: {err}</div> : null}
+              {err ? <div style={{ fontSize: 12, opacity: 0.85 }}>Error: {err}</div> : null}
 
               <button
                 onClick={onCreate}
