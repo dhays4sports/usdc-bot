@@ -12,17 +12,32 @@ function short(addr?: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-function normalizeSettlement(inputRaw: string) {
-  const input = inputRaw.trim();
+type Settlement =
+  | { type: "usdc_bot_receipt"; value: string }
+  | { type: "tx_hash"; value: `0x${string}` };
 
-  // usdc.bot receipt link
-  if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(input)) {
+function normalizeSettlement(inputRaw: string): Settlement | null {
+  const input = inputRaw.trim();
+  if (!input) return null;
+
+  // usdc.bot receipt link (ID is not necessarily numeric)
+  const mReceipt = input.match(/^https?:\/\/(www\.)?usdc\.bot\/e\/([^/?#]+)/i);
+  if (mReceipt) {
     return { type: "usdc_bot_receipt", value: input };
   }
 
-  // tx hash
+  // basescan tx url -> extract hash
+  if (input.includes("basescan.org/tx/")) {
+    const parts = input.split("/tx/");
+    const hash = parts[1]?.split("?")[0]?.split("#")[0]?.trim();
+    if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      return { type: "tx_hash", value: hash as `0x${string}` };
+    }
+  }
+
+  // raw tx hash
   if (/^0x[a-fA-F0-9]{64}$/.test(input)) {
-    return { type: "basescan_tx", value: input };
+    return { type: "tx_hash", value: input as `0x${string}` };
   }
 
   return null;
@@ -63,9 +78,11 @@ export default function RemitReceipt() {
   }, [id]);
 
   const statusSentence =
-    rec?.status === "settled" ? "Settled on-chain" :
-    rec?.status === "linked" ? "Settlement proof linked" :
-    "Proposed (awaiting settlement proof)";
+    rec?.status === "settled"
+      ? "Settled on-chain"
+      : rec?.status === "linked"
+      ? "Settlement proof linked"
+      : "Proposed (awaiting settlement proof)";
 
   const settlementLabel = useMemo(() => {
     if (!rec?.settlement) return null;
@@ -81,7 +98,7 @@ export default function RemitReceipt() {
     const settlement = normalizeSettlement(proofInput);
 
     if (!settlement) {
-      setNotice({ type: "err", msg: "Paste a tx hash (0x…) or a usdc.bot /e/[id] link." });
+      setNotice({ type: "err", msg: "Paste a tx hash (0x…), a Basescan tx URL, or a usdc.bot /e/[id] link." });
       return;
     }
 
@@ -104,7 +121,7 @@ export default function RemitReceipt() {
       setProofInput("");
       setShowEdit(false);
       await refresh();
-    } catch (e: any) {
+    } catch {
       setNotice({ type: "err", msg: "Network error saving proof." });
     } finally {
       setSaving(false);
@@ -137,7 +154,9 @@ export default function RemitReceipt() {
               <div className="cardTitle">RECEIPT</div>
               <p style={{ opacity: 0.8, marginTop: 10 }}>Not found.</p>
               <div style={{ marginTop: 12 }}>
-                <Link href="/remit"><button>Back to remit.bot</button></Link>
+                <Link href="/remit">
+                  <button>Back to remit.bot</button>
+                </Link>
               </div>
             </div>
           </div>
@@ -177,7 +196,12 @@ export default function RemitReceipt() {
 
             <div className="subrow">
               <span>Recipient</span>
-              <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", opacity: 0.9 }}>
+              <span
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  opacity: 0.9,
+                }}
+              >
                 {short(rec.recipient?.address)}
               </span>
             </div>
@@ -203,29 +227,27 @@ export default function RemitReceipt() {
                       {settlementLabel}
                     </a>
                   ) : (
-                    <a className="underline" href={`${BASESCAN}/tx/${rec.settlement.value}`} target="_blank" rel="noreferrer">
+                    <a
+                      className="underline"
+                      href={`${BASESCAN}/tx/${rec.settlement.value}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {settlementLabel}
                     </a>
                   )
                 ) : (
                   <span style={{ opacity: 0.75 }}>Not linked</span>
-                )}
-                {" "}
-                {rec.settlement ? (
-                  <button
-                    style={{ marginLeft: 10 }}
-                    onClick={() => { setShowEdit(true); setNotice(null); }}
-                  >
-                    Replace proof
-                  </button>
-                ) : (
-                  <button
-                    style={{ marginLeft: 10 }}
-                    onClick={() => { setShowEdit(true); setNotice(null); }}
-                  >
-                    Link settlement
-                  </button>
-                )}
+                )}{" "}
+                <button
+                  style={{ marginLeft: 10 }}
+                  onClick={() => {
+                    setShowEdit(true);
+                    setNotice(null);
+                  }}
+                >
+                  {rec.settlement ? "Replace proof" : "Link settlement"}
+                </button>
               </span>
             </div>
 
@@ -234,12 +256,13 @@ export default function RemitReceipt() {
                 <div className="divider" />
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
-                    Paste tx hash or usdc.bot receipt
+                    Paste tx hash, Basescan tx URL, or usdc.bot receipt
                   </div>
+
                   <input
                     value={proofInput}
                     onChange={(e) => setProofInput(e.target.value)}
-                    placeholder="0x… or https://usdc.bot/e/123"
+                    placeholder="0x… or https://basescan.org/tx/0x… or https://usdc.bot/e/…"
                     style={{
                       width: "100%",
                       padding: "10px 12px",
@@ -249,16 +272,22 @@ export default function RemitReceipt() {
                       color: "inherit",
                     }}
                   />
+
                   <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                     <button onClick={saveProof} disabled={saving}>
                       {saving ? "Saving…" : "Save proof"}
                     </button>
                     <button
-                      onClick={() => { setShowEdit(false); setProofInput(""); setNotice(null); }}
+                      onClick={() => {
+                        setShowEdit(false);
+                        setProofInput("");
+                        setNotice(null);
+                      }}
                     >
                       Cancel
                     </button>
                   </div>
+
                   {notice ? (
                     <p style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
                       {notice.type === "err" ? "Error: " : "OK: "}
@@ -270,11 +299,15 @@ export default function RemitReceipt() {
             ) : null}
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-              <Link href="/remit/new"><button>Create another</button></Link>
+              <Link href="/remit/new">
+                <button>Create another</button>
+              </Link>
 
               {!rec.settlement ? (
                 <a
-                  href={`https://usdc.bot/app?beneficiary=${rec.recipient.address}&amount=${encodeURIComponent(rec.amount)}&memo=${encodeURIComponent(rec.memo ?? "")}&ref=${rec.id}`}
+                  href={`https://usdc.bot/app?beneficiary=${rec.recipient.address}&amount=${encodeURIComponent(
+                    rec.amount
+                  )}&memo=${encodeURIComponent(rec.memo ?? "")}&ref=${rec.id}`}
                   target="_blank"
                   rel="noreferrer"
                 >

@@ -3,20 +3,35 @@ import { kv } from "@vercel/kv";
 
 const KEY = (id: string) => `remit:${id}`;
 
-function normalizeSettlement(input: any) {
+type Settlement =
+  | { type: "usdc_bot_receipt"; value: string }
+  | { type: "tx_hash"; value: `0x${string}` };
+
+function normalizeSettlement(input: any): Settlement | null {
   if (!input || typeof input !== "object") return null;
 
-  const type = String(input.type ?? "").trim();
-  const value = String(input.value ?? "").trim();
+  let type = String(input.type ?? "").trim();
+  let value = String(input.value ?? "").trim();
 
-  if (type === "usdc_bot_receipt") {
-    if (!/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(value)) return null;
-    return { type, value };
+  // Allow past versions
+  if (type === "basescan_tx") type = "tx_hash";
+
+  // If someone passes a Basescan URL as "value", extract the hash
+  if (value.includes("basescan.org/tx/")) {
+    const parts = value.split("/tx/");
+    const hash = parts[1]?.split("?")[0]?.split("#")[0]?.trim();
+    if (hash) value = hash;
   }
 
-  if (type === "basescan_tx") {
+  if (type === "usdc_bot_receipt") {
+    // ID is not necessarily numeric; allow any non-empty segment after /e/
+    if (!/^https?:\/\/(www\.)?usdc\.bot\/e\/[^/?#]+/i.test(value)) return null;
+    return { type: "usdc_bot_receipt", value };
+  }
+
+  if (type === "tx_hash") {
     if (!/^0x[a-fA-F0-9]{64}$/.test(value)) return null;
-    return { type, value };
+    return { type: "tx_hash", value: value as `0x${string}` };
   }
 
   return null;
@@ -39,7 +54,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     const settlement = normalizeSettlement(body?.settlement);
     if (!settlement) {
-      return NextResponse.json({ error: "Invalid settlement proof" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid settlement proof. Paste a tx hash, Basescan URL, or usdc.bot receipt link." },
+        { status: 400 }
+      );
     }
 
     const updated = {
@@ -50,7 +68,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     };
 
     await kv.set(KEY(id), updated);
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true, settlement }, { status: 200 });
   } catch (err: any) {
     console.error("PATCH /api/remit/[id] crashed:", err);
     return NextResponse.json(

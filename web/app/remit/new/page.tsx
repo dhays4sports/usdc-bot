@@ -5,27 +5,36 @@ import Link from "next/link";
 import Header from "@/components/Header";
 import { resolveNameToAddress } from "@/lib/nameResolve";
 
-function parseSettlement(inputRaw: string) {
+// Settlement parsing: supports
+// - usdc.bot receipt URL: https://usdc.bot/e/<id>
+// - basescan tx URL: https://basescan.org/tx/<hash>
+// - raw tx hash: 0x...
+function parseSettlement(inputRaw: string):
+  | { type: "usdc_bot_receipt"; value: string }
+  | { type: "tx_hash"; value: `0x${string}` }
+  | undefined {
   const input = inputRaw.trim();
   if (!input) return undefined;
 
-  // usdc.bot receipt link
-  if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(input)) {
+  // usdc.bot receipt link (IDs are NOT necessarily numeric)
+  const mReceipt = input.match(/^https?:\/\/(www\.)?usdc\.bot\/e\/([^/?#]+)/i);
+  if (mReceipt) {
+    // store the full URL (easy + verifiable)
     return { type: "usdc_bot_receipt", value: input };
   }
 
   // basescan tx url -> extract hash
   if (input.includes("basescan.org/tx/")) {
     const parts = input.split("/tx/");
-    const hash = parts[1]?.split("?")[0]?.trim();
+    const hash = parts[1]?.split("?")[0]?.split("#")[0]?.trim();
     if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
-      return { type: "basescan_tx", value: hash };
+      return { type: "tx_hash", value: hash as `0x${string}` };
     }
   }
 
   // raw tx hash
   if (/^0x[a-fA-F0-9]{64}$/.test(input)) {
-    return { type: "basescan_tx", value: input };
+    return { type: "tx_hash", value: input as `0x${string}` };
   }
 
   return undefined;
@@ -33,9 +42,14 @@ function parseSettlement(inputRaw: string) {
 
 export default function NewRemit() {
   const [recipientInput, setRecipientInput] = useState("");
-  const [recipientAddress, setRecipientAddress] = useState<string | null>(null);
-  const [resolveMsg, setResolveMsg] = useState("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
+  const [recipientAddress, setRecipientAddress] = useState<`0x${string}` | null>(null);
+
+  const [resolveMsg, setResolveMsg] = useState(
+    "Paste 0x, ENS (vitalik.eth), or Basename (name.base)."
+  );
+
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
   const [amount, setAmount] = useState("10");
   const [memo, setMemo] = useState("");
   const [reference, setReference] = useState("");
@@ -45,13 +59,8 @@ export default function NewRemit() {
   const [err, setErr] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => {
-    return (
-      !!recipientAddress &&
-      !!amount &&
-      !isNaN(Number(amount)) &&
-      Number(amount) > 0 &&
-      memo.length <= 180
-    );
+    const n = Number(amount);
+    return !!recipientAddress && !!amount && !isNaN(n) && n > 0 && memo.length <= 180;
   }, [recipientAddress, amount, memo]);
 
   async function onResolve() {
@@ -68,20 +77,23 @@ export default function NewRemit() {
     setResolveMsg("Resolving…");
     try {
       const r = await resolveNameToAddress(v);
-      if (r.ok) {
-  setRecipientAddress(r.address);
-  setAvatarUrl(r.avatarUrl ?? null);
 
-  const label = r.label ? `${r.label} → ` : "";
-  setResolveMsg(`${label}${r.address.slice(0, 6)}…${r.address.slice(-4)}`);
-} else {
-  setRecipientAddress(null);
-  setAvatarUrl(null);
-  setResolveMsg(r.message);
-}
+      if (r.ok) {
+        setRecipientAddress(r.address);
+        // optional field; safe even if not present
+        setAvatarUrl((r as any).avatarUrl ?? null);
+
+        const label = r.label ? `${r.label} → ` : "";
+        setResolveMsg(`${label}${r.address.slice(0, 6)}…${r.address.slice(-4)}`);
+      } else {
+        setRecipientAddress(null);
+        setAvatarUrl(null);
+        setResolveMsg(r.message);
+      }
     } catch {
       setRecipientAddress(null);
-      setResolveMsg("Could not resolve. Try a 0x address.");
+      setAvatarUrl(null);
+      setResolveMsg(`Could not resolve ${v}. Try a 0x address.`);
     }
   }
 
@@ -98,15 +110,15 @@ export default function NewRemit() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           recipientInput: recipientInput.trim(),
-          recipientAddress,
+          recipientAddress, // already 0x typed
           amount: amount.trim(),
           memo: memo.trim(),
           reference: reference.trim() || undefined,
-          settlement: settlementObj,
+          settlement: settlementObj, // undefined OK
         }),
       });
 
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(() => ({} as any));
       if (!res.ok) throw new Error(json?.error || "Failed");
 
       window.location.href = `/remit/r/${json.id}`;
@@ -128,34 +140,46 @@ export default function NewRemit() {
             <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Recipient</div>
+
                 <input
                   value={recipientInput}
                   onChange={(e) => setRecipientInput(e.target.value)}
                   onBlur={onResolve}
-                  placeholder="0x… or vitalik.eth"
+                  placeholder="0x… or vitalik.eth or name.base"
                 />
-                <div style={{ fontSize: 12, opacity: 0.7 }}>{resolveMsg}</div>
-<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-  {avatarUrl ? (
-    <img
-      src={avatarUrl}
-      alt=""
-      width={22}
-      height={22}
-      style={{ borderRadius: 999, opacity: 0.95 }}
-    />
-  ) : (
-    <div
-      style={{
-        width: 22,
-        height: 22,
-        borderRadius: 999,
-        background: "rgba(255,255,255,0.08)",
-        border: "1px solid rgba(255,255,255,0.10)",
-      }}
-    />
-  )}
-</div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt=""
+                      width={22}
+                      height={22}
+                      style={{ borderRadius: 999, opacity: 0.95 }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.08)",
+                        border: "1px solid rgba(255,255,255,0.10)",
+                      }}
+                    />
+                  )}
+
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>{resolveMsg}</div>
+                </div>
+
+                {recipientAddress ? (
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>
+                    Using:{" "}
+                    <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                      {recipientAddress}
+                    </span>
+                  </div>
+                ) : null}
               </label>
 
               <label style={{ display: "grid", gap: 6 }}>

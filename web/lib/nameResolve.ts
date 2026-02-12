@@ -1,27 +1,18 @@
-export async function resolveNameToAddress(
-  input: string
-): Promise<
-  | { ok: true; address: `0x${string}`; label?: string; avatarUrl?: string | null }
+export async function resolveNameToAddress(input: string): Promise<
+  | { ok: true; address: `0x${string}`; label?: string }
   | { ok: false; message: string }
 > {
   const v = input.trim();
   if (!v) return { ok: false, message: "Enter a wallet address or name." };
 
-  try {
-    const res = await fetch(`/api/resolve-name?input=${encodeURIComponent(v)}`, {
-      cache: "no-store",
-    });
+  const res = await fetch(`/api/resolve?input=${encodeURIComponent(v)}`, {
+    method: "GET",
+    cache: "no-store",
+  });
 
-    const json = await res.json();
-    if (!json?.ok) return { ok: false, message: json?.message || "Could not resolve." };
+  const json = await res.json().catch(() => null);
 
-    return {
-      ok: true,
-      address: json.address as `0x${string}`,
-      label: json.label,
-      avatarUrl: json.avatarUrl ?? null,
-    };
-  } catch {
-    return { ok: false, message: "Resolver unavailable. Try again." };
-  }
+  if (!json) return { ok: false, message: "Resolver error." };
+  if (json.ok) return { ok: true, address: json.address, label: json.label };
+  return { ok: false, message: json.message || "Could not resolve." };
 }
