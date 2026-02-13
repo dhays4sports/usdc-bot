@@ -105,6 +105,22 @@ export default function NewRemit() {
     try {
       const settlementObj = parseSettlement(settlement);
 
+const auth = await fetch("/api/authorize", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    action: "remit.create",
+    amount: amount.trim(),
+    asset: "USDC",
+    recipient: recipientAddress,
+    context: { source: "remit.bot" },
+  }),
+}).then(r => r.json());
+
+if (!auth?.allow) {
+  throw new Error(auth?.reason || "Not authorized");
+}
+
       const res = await fetch("/api/remit", {
         method: "POST",
         headers: { "content-type": "application/json" },
