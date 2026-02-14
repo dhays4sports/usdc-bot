@@ -7,6 +7,7 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { coordinatorAbi } from "@/lib/abi";
 import { isAddress, keccak256, parseEventLogs, parseUnits, toHex } from "viem";
 import { useRouter, useSearchParams } from "next/navigation";
+import { resolveNameToAddress } from "@/lib/nameResolve";
 
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as `0x${string}`;
 
@@ -23,6 +24,11 @@ function safeDecode(s: string) {
   }
 }
 
+function short(addr?: string) {
+  if (!addr) return "—";
+  return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
 export default function CreateEscrowPage() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -30,7 +36,17 @@ export default function CreateEscrowPage() {
   const { isConnected } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
 
-  const [beneficiary, setBeneficiary] = useState("");
+  // Beneficiary input (can be ENS / basename / 0x)
+  const [beneficiaryInput, setBeneficiaryInput] = useState("");
+  // Resolved beneficiary address (always 0x… when valid)
+  const [beneficiaryAddress, setBeneficiaryAddress] = useState<`0x${string}` | null>(null);
+
+  const [resolveMsg, setResolveMsg] = useState<string>(
+    "Paste 0x, ENS (vitalik.eth), or Basename (name.base)."
+  );
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+
   const [amount, setAmount] = useState("1.00");
   const [deadline, setDeadline] = useState("");
   const [memo, setMemo] = useState("");
@@ -39,6 +55,58 @@ export default function CreateEscrowPage() {
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [lastTx, setLastTx] = useState<`0x${string}` | null>(null);
 
+  // Track whether beneficiary was prefilled by query param
+  const [beneficiaryPrefilled, setBeneficiaryPrefilled] = useState(false);
+  const [prefillResolved, setPrefillResolved] = useState(false);
+
+  async function onResolveBeneficiary() {
+    const v = beneficiaryInput.trim();
+
+    // reset prior status
+    setNotice(null);
+
+    if (!v) {
+      setBeneficiaryAddress(null);
+      setAvatarUrl(null);
+      setResolveMsg("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
+      return;
+    }
+
+    // Fast path: direct address
+    if (isAddress(v)) {
+      setBeneficiaryAddress(v as `0x${string}`);
+      setAvatarUrl(null);
+      setResolveMsg(`Address: ${short(v)}`);
+      return;
+    }
+
+    setResolving(true);
+    setResolveMsg("Resolving name…");
+
+    try {
+      const r = await resolveNameToAddress(v);
+
+      if (r.ok) {
+        setBeneficiaryAddress(r.address);
+        // optional avatarUrl support (if your resolver returns it)
+        setAvatarUrl((r as any).avatarUrl ?? null);
+
+        const label = r.label ? `${r.label} → ` : "";
+        setResolveMsg(`${label}${short(r.address)}`);
+      } else {
+        setBeneficiaryAddress(null);
+        setAvatarUrl(null);
+        setResolveMsg(r.message || `Could not resolve ${v}`);
+      }
+    } catch (e: any) {
+      setBeneficiaryAddress(null);
+      setAvatarUrl(null);
+      setResolveMsg(`Could not resolve ${v}. Try a 0x address.`);
+    } finally {
+      setResolving(false);
+    }
+  }
+
   // Prefill from query params once on mount
   useEffect(() => {
     const b = sp.get("beneficiary");
@@ -46,24 +114,60 @@ export default function CreateEscrowPage() {
     const m = sp.get("memo");
     const r = sp.get("return");
 
-    if (b) setBeneficiary(safeDecode(b));
+    if (b) {
+      setBeneficiaryInput(safeDecode(b));
+      setBeneficiaryPrefilled(true);
+    }
     if (a) setAmount(safeDecode(a));
     if (m) setMemo(safeDecode(m));
     if (r) setReturnUrl(safeDecode(r));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // If beneficiary was prefilled, resolve it exactly once (no keystroke spam)
+  useEffect(() => {
+    if (!beneficiaryPrefilled) return;
+    if (prefillResolved) return;
+
+    const v = beneficiaryInput.trim();
+    if (!v) return;
+
+    setPrefillResolved(true);
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    onResolveBeneficiary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beneficiaryPrefilled, prefillResolved, beneficiaryInput]);
+
   const memoHash = useMemo(() => {
     const mm = memo.trim();
     return mm.length ? keccak256(toHex(mm)) : ("0x" + "0".repeat(64)) as `0x${string}`;
   }, [memo]);
+
+  const beneficiaryReady =
+    isAddress(beneficiaryInput.trim()) || (beneficiaryAddress && isAddress(beneficiaryAddress));
 
   async function onCreate() {
     setNotice(null);
 
     if (!isConnected) return setNotice({ type: "err", msg: "Connect your wallet first." });
     if (!publicClient) return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
-    if (!isAddress(beneficiary)) return setNotice({ type: "err", msg: "Beneficiary must be a valid 0x address." });
+
+    const b = beneficiaryInput.trim();
+    let beneficiary0x: `0x${string}` | null = null;
+
+    if (isAddress(b)) {
+      beneficiary0x = b as `0x${string}`;
+    } else if (beneficiaryAddress) {
+      beneficiary0x = beneficiaryAddress;
+    }
+
+    if (!beneficiary0x) {
+      return setNotice({
+        type: "err",
+        msg: "Enter a valid beneficiary (0x… / ENS / name.base) and wait for it to resolve.",
+      });
+    }
+
     if (!deadline) return setNotice({ type: "err", msg: "Pick a deadline." });
 
     let amount6: bigint;
@@ -83,7 +187,7 @@ export default function CreateEscrowPage() {
         address: COORD,
         abi: coordinatorAbi,
         functionName: "createEscrow",
-        args: [beneficiary as `0x${string}`, amount6, BigInt(deadlineTs), memoHash],
+        args: [beneficiary0x, amount6, BigInt(deadlineTs), memoHash],
       });
 
       setLastTx(txHash);
@@ -105,7 +209,6 @@ export default function CreateEscrowPage() {
       const id = logs[0].args.id;
       setNotice({ type: "ok", msg: `Escrow created (#${id.toString()}). Redirecting...` });
 
-      // Preserve return param for the receipt page to optionally link back to remit.bot
       const qs = returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : "";
       router.push(`/e/${id.toString()}${qs}`);
     } catch (e: any) {
@@ -150,10 +253,41 @@ export default function CreateEscrowPage() {
             Beneficiary
             <input
               style={{ width: "100%" }}
-              value={beneficiary}
-              onChange={(e) => setBeneficiary(e.target.value)}
-              placeholder="0x... or (later) name.eth"
+              value={beneficiaryInput}
+              onChange={(e) => {
+                setBeneficiaryInput(e.target.value);
+                // if user starts typing, we should not keep showing an old resolved address
+                setBeneficiaryAddress(null);
+                setAvatarUrl(null);
+                setResolveMsg("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
+              }}
+              onBlur={onResolveBeneficiary}
+              placeholder="0x… or vitalik.eth or name.base"
             />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt=""
+                  width={22}
+                  height={22}
+                  style={{ borderRadius: 999, opacity: 0.95 }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                  }}
+                />
+              )}
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                {resolving ? "Resolving…" : resolveMsg}
+              </div>
+            </div>
           </label>
 
           <label>
@@ -186,7 +320,6 @@ export default function CreateEscrowPage() {
             />
           </label>
 
-          {/* optional: show return state so you can verify the handoff */}
           {returnUrl ? (
             <p style={{ fontSize: 12, opacity: 0.75, marginTop: -4 }}>
               Return after escrow:{" "}
@@ -196,8 +329,8 @@ export default function CreateEscrowPage() {
             </p>
           ) : null}
 
-          <button onClick={onCreate} disabled={isPending}>
-            {isPending ? "Submitting..." : "Create escrow"}
+          <button onClick={onCreate} disabled={isPending || resolving || !beneficiaryReady}>
+            {isPending ? "Submitting..." : resolving ? "Resolving..." : "Create escrow"}
           </button>
 
           <p style={{ fontSize: 12, opacity: 0.75 }}>
