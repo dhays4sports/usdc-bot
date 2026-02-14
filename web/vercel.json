@@ -1,18 +1,7 @@
 {
   "rewrites": [
-    {
-      "source": "/",
-      "destination": "/remit",
-      "has": [
-        { "type": "host", "value": "remit.bot" }
-      ]
-    },
-    {
-      "source": "/",
-      "destination": "/remit",
-      "has": [
-        { "type": "host", "value": "www.remit.bot" }
-      ]
-    }
+    { "source": "/", "destination": "/remit" },
+    { "source": "/:path*", "destination": "/remit/:path*" }
   ]
 }
+
