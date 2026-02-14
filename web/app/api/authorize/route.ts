@@ -1,75 +1,53 @@
 import { NextResponse } from "next/server";
+import { kv } from "@vercel/kv";
+import { newAuthId } from "@/lib/authorizeId";
+import type { AuthorizationRecord } from "@/lib/authorizeTypes";
 
-type Input = {
-  action?: string;
-  amount?: string | number;
-  asset?: string;
-  recipient?: string;
-  context?: any;
-};
+const KEY = (id: string) => `authorize:${id}`;
 
-function isAddr(v: string) {
+function is0x40(v: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(v);
-}
-
-// MVV policy: allow only <= 50 USDC, require valid recipient.
-// You can expand this into per-policy KV later.
-export async function GET() {
-  return NextResponse.json(
-    { ok: true, hint: "POST JSON { action, amount, asset, recipient, context }" },
-    { status: 200 }
-  );
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Input;
+    const body = await req.json();
 
-    const action = String(body.action ?? "").trim() || "unknown";
-    const asset = String(body.asset ?? "USDC").trim();
-    const amountNum = Number(String(body.amount ?? "").trim());
-    const recipient = String(body.recipient ?? "").trim();
+    const id = newAuthId();
+    const createdAt = new Date().toISOString();
 
-    if (!asset || asset !== "USDC") {
-      return NextResponse.json(
-        { allow: false, policyId: "policy.asset.only-usdc", reason: "Only USDC supported in MVV." },
-        { status: 200 }
-      );
-    }
+    const spenderInput = String(body.spenderInput ?? "").trim();
+    const spenderAddress = String(body.spenderAddress ?? "").trim();
+    const scope = String(body.scope ?? "").trim();
+    const limit = String(body.limit ?? "").trim();
+    const memo = String(body.memo ?? "").trim();
+    const expiresAt = String(body.expiresAt ?? "").trim();
 
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      return NextResponse.json(
-        { allow: false, policyId: "policy.amount.invalid", reason: "Amount must be a positive number." },
-        { status: 200 }
-      );
-    }
+    if (!scope) return NextResponse.json({ error: "Scope is required" }, { status: 400 });
+    if (!is0x40(spenderAddress)) return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
 
-    if (!isAddr(recipient)) {
-      return NextResponse.json(
-        { allow: false, policyId: "policy.recipient.invalid", reason: "Recipient must be a valid 0x address." },
-        { status: 200 }
-      );
-    }
+    const rec: AuthorizationRecord = {
+      id,
+      createdAt,
+      version: "mvv-1",
+      status: body.proof ? "linked" : "proposed",
+      network: "base",
+      asset: "USDC",
+      spender: { input: spenderInput, address: spenderAddress as `0x${string}` },
+      scope,
+      limit: limit || undefined,
+      expiresAt: expiresAt || undefined,
+      memo: memo || undefined,
+      proof: body.proof ?? undefined,
+    };
 
-    const MAX = 50;
-    if (amountNum > MAX) {
-      return NextResponse.json(
-        {
-          allow: false,
-          policyId: "policy.amount.max",
-          reason: `Amount exceeds MVV limit (${MAX} USDC).`,
-          constraints: { maxAmount: MAX },
-        },
-        { status: 200 }
-      );
-    }
-
-    return NextResponse.json(
-      { allow: true, policyId: "policy.mvv.pass", reason: `Allowed for action: ${action}.` },
-      { status: 200 }
-    );
+    await kv.set(KEY(id), rec);
+    return NextResponse.json({ ok: true, id }, { status: 200 });
   } catch (err: any) {
     console.error("POST /api/authorize crashed:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Server error", detail: String(err?.message ?? err) },
+      { status: 500 }
+    );
   }
 }
