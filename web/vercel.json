@@ -1,7 +1,6 @@
 {
-  "rewrites": [
-    { "source": "/", "destination": "/remit" },
-    { "source": "/:path*", "destination": "/remit/:path*" }
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/$", "dest": "/remit" }
   ]
 }
-
