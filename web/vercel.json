@@ -1,3 +1,14 @@
 {
-  "framework": "nextjs"
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/remit",
+      "permanent": false
+    },
+    {
+      "source": "/:path*",
+      "destination": "/remit/:path*",
+      "permanent": false
+    }
+  ]
 }
