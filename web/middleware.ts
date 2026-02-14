@@ -2,26 +2,26 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(req: NextRequest) {
-  const host = req.headers.get("host")?.toLowerCase() || "";
+  const host = (req.headers.get("host") || "").toLowerCase();
   const pathname = req.nextUrl.pathname;
 
-  // Only rewrite when the request is coming to remit.bot
+  // ONLY apply to remit.bot
   if (host === "remit.bot" || host === "www.remit.bot") {
-    // If already on /remit, do nothing
+    // already under /remit → do nothing
     if (pathname === "/remit" || pathname.startsWith("/remit/")) {
       return NextResponse.next();
     }
 
-    // Rewrite / -> /remit and /x -> /remit/x (URL stays remit.bot)
+    // redirect once: / -> /remit, /new -> /remit/new, etc.
     const url = req.nextUrl.clone();
     url.pathname = pathname === "/" ? "/remit" : `/remit${pathname}`;
-    return NextResponse.rewrite(url);
+    return NextResponse.redirect(url);
   }
 
   return NextResponse.next();
 }
 
+// avoid touching Next internals + api
 export const config = {
   matcher: ["/((?!_next|api|favicon.ico).*)"],
 };
-
