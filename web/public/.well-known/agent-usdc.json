@@ -1,0 +1,19 @@
+{
+  "mesh_version": "0.1",
+  "domain": "usdc.bot",
+  "surface_type": "execution",
+  "network": "base",
+  "asset": "USDC",
+  "custody": "none",
+  "human_required_for_execution": true,
+  "capabilities": [
+    "create_escrow",
+    "view_receipt",
+    "link_from_coordination_surfaces"
+  ],
+  "links": {
+    "tools": "/.well-known/tools.json",
+    "homepage": "/",
+    "create": "/app"
+  }
+}
