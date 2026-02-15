@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import Header from "@/components/Header";
 
@@ -5,6 +7,19 @@ const BASESCAN = "https://basescan.org";
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
 export default function Home() {
+  const h = headers();
+  const host = h.get("host") ?? "";
+
+  // Domain-based surface routing
+  if (host.startsWith("remit.bot")) {
+    redirect("/remit");
+  }
+
+  if (host.startsWith("authorize.bot")) {
+    redirect("/authorize");
+  }
+
+  // usdc.bot falls through to normal homepage
   return (
     <>
       <Header />
