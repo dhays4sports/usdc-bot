@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export function middleware(req: NextRequest) {
-  const url = req.nextUrl;
+  // Always clone nextUrl before mutating
+  const url = req.nextUrl.clone();
   const host = (req.headers.get("host") || "").toLowerCase();
-
-  // Don’t interfere with Next internals / APIs / static assets
   const p = url.pathname;
+
+  // Skip Next internals + API + static + well-known
   if (
     p.startsWith("/_next") ||
     p.startsWith("/api") ||
@@ -17,26 +18,27 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // remit.bot root -> /remit (but allow /remit/* to work normally)
+  // remit.bot -> /remit/*
   if (host === "remit.bot" || host === "www.remit.bot") {
     if (!p.startsWith("/remit")) {
       url.pathname = `/remit${p === "/" ? "" : p}`;
       return NextResponse.rewrite(url);
     }
+    return NextResponse.next();
   }
 
-  // authorize.bot root -> /authorize
+  // authorize.bot -> /authorize/*
   if (host === "authorize.bot" || host === "www.authorize.bot") {
     if (!p.startsWith("/authorize")) {
       url.pathname = `/authorize${p === "/" ? "" : p}`;
       return NextResponse.rewrite(url);
     }
+    return NextResponse.next();
   }
 
   return NextResponse.next();
 }
 
-// Apply middleware to everything except next internals
 export const config = {
-  matcher: ["/((?!_next/static|_next/image).*)"],
+  matcher: ["/:path*"],
 };
