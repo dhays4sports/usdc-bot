@@ -1,23 +1,27 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import Header from "@/components/Header";
 
-// keep your other imports (Link, Header, etc) exactly the same
+const BASESCAN = "https://basescan.org";
+const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
 export default async function Home() {
   const h = await headers();
 
-  const host = (
-    h.get("x-forwarded-host") ??
-    h.get("host") ??
-    h.get("x-vercel-forwarded-host") ??
-    ""
-  ).toLowerCase();
+  const host =
+    (h.get("x-forwarded-host") ??
+      h.get("host") ??
+      h.get("x-vercel-forwarded-host") ??
+      "")
+      .toLowerCase()
+      .split(",")[0]
+      .trim();
 
-  // ✅ keep your redirect logic right here
   if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
   if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize");
 
-  // ✅ everything below stays your current usdc.bot UI/UX
+  // ...everything below stays identical
 
   return (
     <>
