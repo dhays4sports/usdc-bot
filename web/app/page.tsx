@@ -8,12 +8,20 @@ const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
 export default function Home() {
   const h = headers();
-  const host = (h.get("x-forwarded-host") ?? h.get("host") ?? "").toLowerCase();
 
+  const host =
+    (h.get("x-forwarded-host") ??
+      h.get("host") ??
+      h.get("x-vercel-forwarded-host") ??
+      "")
+      .toLowerCase()
+      .split(",")[0]
+      .trim();
+
+  // If headers are missing for some reason, don't break homepage.
   if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
   if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize");
 
-  // usdc.bot falls through to normal homepage
   return (
     <>
       <Header />
