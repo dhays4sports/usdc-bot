@@ -8,16 +8,10 @@ const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
 export default function Home() {
   const h = headers();
-  const host = h.get("host") ?? "";
+  const host = (h.get("x-forwarded-host") ?? h.get("host") ?? "").toLowerCase();
 
-  // Domain-based surface routing
-  if (host.startsWith("remit.bot")) {
-    redirect("/remit");
-  }
-
-  if (host.startsWith("authorize.bot")) {
-    redirect("/authorize");
-  }
+  if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
+  if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize");
 
   // usdc.bot falls through to normal homepage
   return (
