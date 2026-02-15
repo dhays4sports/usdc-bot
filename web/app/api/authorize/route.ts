@@ -9,8 +9,11 @@ function is0x40(v: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(v);
 }
 
-// ✅ Add this helper (or replace your current proof logic with it)
+// ✅ exact proof union from your type
 type AuthProof = NonNullable<AuthorizationRecord["proof"]>;
+
+// ✅ template-literal helper for 0x... values
+type Hex0x = `0x${string}`;
 
 function normalizeProof(input: any): AuthProof | null {
   if (!input) return null;
@@ -18,8 +21,12 @@ function normalizeProof(input: any): AuthProof | null {
   // allow passing a raw string too (nice for agents / curl)
   if (typeof input === "string") {
     const v = input.trim();
-    if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(v)) return { type: "usdc_bot_receipt", value: v };
-    if (/^0x[a-fA-F0-9]{64}$/.test(v)) return { type: "basescan_tx", value: v };
+    if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(v)) {
+      return { type: "usdc_bot_receipt", value: v } as AuthProof;
+    }
+    if (/^0x[a-fA-F0-9]{64}$/.test(v)) {
+      return { type: "basescan_tx", value: v as Hex0x } as AuthProof;
+    }
     return null;
   }
 
@@ -30,12 +37,12 @@ function normalizeProof(input: any): AuthProof | null {
 
   if (type === "usdc_bot_receipt") {
     if (!/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(value)) return null;
-    return { type: "usdc_bot_receipt", value };
+    return { type: "usdc_bot_receipt", value } as AuthProof;
   }
 
   if (type === "basescan_tx") {
     if (!/^0x[a-fA-F0-9]{64}$/.test(value)) return null;
-    return { type: "basescan_tx", value };
+    return { type: "basescan_tx", value: value as Hex0x } as AuthProof;
   }
 
   return null;
@@ -56,7 +63,9 @@ export async function POST(req: Request) {
     const expiresAt = String(body.expiresAt ?? "").trim();
 
     if (!scope) return NextResponse.json({ error: "Scope is required" }, { status: 400 });
-    if (!is0x40(spenderAddress)) return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
+    if (!is0x40(spenderAddress)) {
+      return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
+    }
 
     // ✅ normalize proof into the exact union type
     const proof = normalizeProof(body?.proof);
@@ -73,7 +82,7 @@ export async function POST(req: Request) {
       limit: limit || undefined,
       expiresAt: expiresAt || undefined,
       memo: memo || undefined,
-      proof: proof ?? undefined, // ✅ TS-safe now
+      proof: proof ?? undefined,
     };
 
     await kv.set(KEY(id), rec);
