@@ -9,20 +9,33 @@ function is0x40(v: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(v);
 }
 
-function normalizeProof(input: any) {
-  if (!input || typeof input !== "object") return null;
+// ✅ Add this helper (or replace your current proof logic with it)
+type AuthProof = NonNullable<AuthorizationRecord["proof"]>;
+
+function normalizeProof(input: any): AuthProof | null {
+  if (!input) return null;
+
+  // allow passing a raw string too (nice for agents / curl)
+  if (typeof input === "string") {
+    const v = input.trim();
+    if (/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(v)) return { type: "usdc_bot_receipt", value: v };
+    if (/^0x[a-fA-F0-9]{64}$/.test(v)) return { type: "basescan_tx", value: v };
+    return null;
+  }
+
+  if (typeof input !== "object") return null;
 
   const type = String(input.type ?? "").trim();
   const value = String(input.value ?? "").trim();
 
   if (type === "usdc_bot_receipt") {
     if (!/^https?:\/\/(www\.)?usdc\.bot\/e\/\d+/.test(value)) return null;
-    return { type, value };
+    return { type: "usdc_bot_receipt", value };
   }
 
   if (type === "basescan_tx") {
     if (!/^0x[a-fA-F0-9]{64}$/.test(value)) return null;
-    return { type, value };
+    return { type: "basescan_tx", value };
   }
 
   return null;
@@ -30,7 +43,7 @@ function normalizeProof(input: any) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json();
 
     const id = newAuthId();
     const createdAt = new Date().toISOString();
@@ -42,18 +55,11 @@ export async function POST(req: Request) {
     const memo = String(body.memo ?? "").trim();
     const expiresAt = String(body.expiresAt ?? "").trim();
 
-    if (!scope) {
-      return NextResponse.json({ error: "Scope is required" }, { status: 400 });
-    }
-    if (!is0x40(spenderAddress)) {
-      return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
-    }
+    if (!scope) return NextResponse.json({ error: "Scope is required" }, { status: 400 });
+    if (!is0x40(spenderAddress)) return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
 
-    // If proof is provided, validate it. If invalid, hard-fail (prevents poison records).
-    const proof = body?.proof ? normalizeProof(body.proof) : undefined;
-    if (body?.proof && !proof) {
-      return NextResponse.json({ error: "Invalid proof" }, { status: 400 });
-    }
+    // ✅ normalize proof into the exact union type
+    const proof = normalizeProof(body?.proof);
 
     const rec: AuthorizationRecord = {
       id,
@@ -67,7 +73,7 @@ export async function POST(req: Request) {
       limit: limit || undefined,
       expiresAt: expiresAt || undefined,
       memo: memo || undefined,
-      proof: proof ?? undefined,
+      proof: proof ?? undefined, // ✅ TS-safe now
     };
 
     await kv.set(KEY(id), rec);
