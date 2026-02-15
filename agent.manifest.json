@@ -1,0 +1,27 @@
+{
+  "version": "0.1.0",
+  "globalContract": "./AGENT.md",
+  "surfaces": [
+    {
+      "name": "authorize.bot",
+      "path": "./authorize.bot/AGENT.md",
+      "capabilities": ["authorize.read", "authorize.create"],
+      "custodial": false,
+      "executesTransactions": false
+    },
+    {
+      "name": "remit.bot",
+      "path": "./remit.bot/AGENT.md",
+      "capabilities": ["remit.create", "remit.read"],
+      "custodial": false,
+      "executesTransactions": false
+    },
+    {
+      "name": "usdc.bot",
+      "path": "./usdc.bot/AGENT.md",
+      "capabilities": ["escrow.prepare", "escrow.read"],
+      "custodial": false,
+      "executesTransactions": false
+    }
+  ]
+}
