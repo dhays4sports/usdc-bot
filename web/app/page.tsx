@@ -6,8 +6,8 @@ import Header from "@/components/Header";
 const BASESCAN = "https://basescan.org";
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as string;
 
-export default function Home() {
-  const h = headers();
+export default async function Home() {
+  const h = await headers();
 
   const host =
     (h.get("x-forwarded-host") ??
@@ -18,7 +18,6 @@ export default function Home() {
       .split(",")[0]
       .trim();
 
-  // If headers are missing for some reason, don't break homepage.
   if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
   if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize");
 
