@@ -65,12 +65,11 @@ export async function POST(req: Request) {
 
     const spenderInput = String(body.spenderInput ?? "").trim();
     const spenderAddress = String(body.spenderAddress ?? "").trim();
-    const scope = String(body.scope ?? "").trim();
+    const scope = String(body.scope ?? "").trim() || "pay_usdc";
     const limit = String(body.limit ?? "").trim();
     const memo = String(body.memo ?? "").trim();
     const expiresAt = String(body.expiresAt ?? "").trim();
 
-    if (!scope) return NextResponse.json({ error: "Scope is required" }, { status: 400 });
     if (!is0x40(spenderAddress)) {
       return NextResponse.json({ error: "Invalid spender address" }, { status: 400 });
     }
