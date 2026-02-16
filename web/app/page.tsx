@@ -18,10 +18,21 @@ export default async function Home() {
       .split(",")[0]
       .trim();
 
+<<<<<<< HEAD
   if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
   if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize/new");
+=======
+  // 🔒 IMPORTANT: only redirect ROOT
+  if (host === "authorize.bot" || host === "www.authorize.bot") {
+    redirect("/authorize");
+  }
+>>>>>>> 0af93e2d3d9668a28ab8f4f01fe659bfdafbf7da
 
-  // ...everything below stays identical
+  if (host === "remit.bot" || host === "www.remit.bot") {
+    redirect("/remit");
+  }
+
+  // Everything else stays EXACTLY the same
 
   return (
     <>
