@@ -34,40 +34,36 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-const rl = await rateLimit({
-  surface: "authorize",
-  action: isRevoke ? "revoke" : "replace_proof",
-  req,
-  limit: isRevoke ? 10 : 20,
-  windowSec: 60,
-});
-
-if (!rl.ok) {
-  return NextResponse.json(
-    { error: "Rate limit exceeded. Try again soon." },
-    { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
-  );
-}
     const { id } = await ctx.params;
+
+    // ✅ MUST parse body before using isRevoke
     const body = await req.json();
-    const isRevoke = body?.action === "revoke"; 
+    const isRevoke = body?.action === "revoke";
+
+    // ✅ rate limit AFTER isRevoke exists
+    const rl = await rateLimit({
+      surface: "authorize",
+      action: isRevoke ? "revoke" : "replace_proof",
+      req,
+      limit: isRevoke ? 10 : 20,
+      windowSec: 60,
+    });
+
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again soon." },
+        { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+      );
+    }
+
     const existing: any = await kv.get(KEY(id));
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Don’t allow edits after revoke (clean trust semantics)
-    if (existing.status === "revoked") {
-      return NextResponse.json({ error: "Record is revoked" }, { status: 409 });
-    }
-
     // revoke
-    if (body?.action === "revoke") {
-      const updated = {
-        ...existing,
-        status: "revoked",
-        updatedAt: new Date().toISOString(),
-      };
+    if (isRevoke) {
+      const updated = { ...existing, status: "revoked", updatedAt: new Date().toISOString() };
       await kv.set(KEY(id), updated);
-      return NextResponse.json({ ok: true, record: updated }, { status: 200 });
+      return NextResponse.json({ ok: true }, { status: 200 });
     }
 
     // link / replace proof
@@ -82,7 +78,7 @@ if (!rl.ok) {
     };
 
     await kv.set(KEY(id), updated);
-    return NextResponse.json({ ok: true, record: updated }, { status: 200 });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err: any) {
     console.error("PATCH /api/authorize/[id] crashed:", err);
     return NextResponse.json(
@@ -90,4 +86,3 @@ if (!rl.ok) {
       { status: 500 }
     );
   }
-}
