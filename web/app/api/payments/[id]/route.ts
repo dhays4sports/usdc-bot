@@ -35,7 +35,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
   const rl = await rateLimit({
     surface: "payments",
-    action: "link_settlement",
+    action: "link_proof",
     req,
     limit: 20,
     windowSec: 60,
