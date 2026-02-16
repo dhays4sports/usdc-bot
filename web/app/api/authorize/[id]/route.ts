@@ -1,6 +1,6 @@
-import { rateLimit } from "@/lib/rateLimit";
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { rateLimit } from "@/lib/rateLimit";
 
 const KEY = (id: string) => `authorize:${id}`;
 
@@ -34,9 +34,16 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await ctx.params;
-    const body = await req.json().catch(() => ({}));
+    const rl = await rateLimit(req, "authorize_patch", 20, 60);
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again soon." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
+      );
+    }
 
+    const { id } = await ctx.params;
+    const body = await req.json();
     const existing: any = await kv.get(KEY(id));
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
