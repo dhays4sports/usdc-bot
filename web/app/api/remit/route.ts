@@ -2,14 +2,22 @@ import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { newId } from "@/lib/remitId";
 import type { RemittanceRecord } from "@/lib/remitTypes";
+import { rateLimit } from "@/lib/rateLimit";
 
 const KEY = (id: string) => `remit:${id}`;
 const asHexAddress = (v: string) => v as `0x${string}`;
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const rl = await rateLimit(req, "remit_post", 10, 60);
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again soon." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
+      );
+    }
 
+    const body = await req.json();
     const id = newId();
     const createdAt = new Date().toISOString();
 
