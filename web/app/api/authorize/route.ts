@@ -51,13 +51,20 @@ function normalizeProof(input: any): AuthProof | null {
 
 export async function POST(req: Request) {
   try {
-    const rl = await rateLimit(req, "authorize_post", 10, 60);
-    if (!rl.ok) {
-      return NextResponse.json(
-        { error: "Rate limit exceeded. Try again soon." },
-        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
-      );
-    }
+const rl = await rateLimit({
+  surface: "authorize",
+  action: "create",
+  req,
+  limit: 10,
+  windowSec: 60,
+});
+
+if (!rl.ok) {
+  return NextResponse.json(
+    { error: "Rate limit exceeded. Try again soon." },
+    { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+  );
+}
 
     const body = await req.json();
     const id = newAuthId();

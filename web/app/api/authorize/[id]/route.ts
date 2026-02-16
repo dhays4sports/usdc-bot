@@ -34,16 +34,23 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const rl = await rateLimit(req, "authorize_patch", 20, 60);
-    if (!rl.ok) {
-      return NextResponse.json(
-        { error: "Rate limit exceeded. Try again soon." },
-        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
-      );
-    }
+const rl = await rateLimit({
+  surface: "authorize",
+  action: isRevoke ? "revoke" : "replace_proof",
+  req,
+  limit: isRevoke ? 10 : 20,
+  windowSec: 60,
+});
 
+if (!rl.ok) {
+  return NextResponse.json(
+    { error: "Rate limit exceeded. Try again soon." },
+    { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+  );
+}
     const { id } = await ctx.params;
     const body = await req.json();
+    const isRevoke = body?.action === "revoke"; 
     const existing: any = await kv.get(KEY(id));
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

@@ -1,50 +1,59 @@
 import { kv } from "@vercel/kv";
 
 type RateLimitResult =
-  | { ok: true; remaining: number; resetSeconds: number }
-  | { ok: false; retryAfterSeconds: number };
+  | { ok: true; remaining?: number }
+  | { ok: false; retryAfterSec: number };
 
-function ipFromReq(req: Request) {
-  // Vercel forwards a stable client IP header in production
+function firstIpFromXForwardedFor(v: string) {
+  // "1.2.3.4, 5.6.7.8" -> "1.2.3.4"
+  return v.split(",")[0]?.trim();
+}
+
+export function getClientIp(req: Request): string {
   const h = req.headers;
-  return (
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip") ||
-    "unknown"
-  );
+
+  const xff = h.get("x-forwarded-for");
+  if (xff) return firstIpFromXForwardedFor(xff) || "unknown";
+
+  const xri = h.get("x-real-ip");
+  if (xri) return xri.trim() || "unknown";
+
+  // Vercel sometimes exposes this
+  const xvercel = h.get("x-vercel-forwarded-for");
+  if (xvercel) return firstIpFromXForwardedFor(xvercel) || "unknown";
+
+  return "unknown";
 }
 
 /**
- * KV-backed fixed-window counter.
- * Key: rl:{scope}:{ip}
+ * Simple fixed-window limiter using Redis INCR + EXPIRE.
+ * - If the key doesn't exist, count becomes 1 and we set TTL.
+ * - If count > limit, block.
  */
-export async function rateLimit(
-  req: Request,
-  scope: string,
-  limit: number,
-  windowSeconds: number
-): Promise<RateLimitResult> {
-  const ip = ipFromReq(req);
-  const key = `rl:${scope}:${ip}`;
+export async function rateLimit(opts: {
+  surface: "remit" | "authorize";
+  action: "create" | "link_proof" | "replace_proof" | "revoke";
+  req: Request;
+  limit: number; // max requests per window
+  windowSec: number; // window size
+}): Promise<RateLimitResult> {
+  const ip = getClientIp(opts.req);
 
-  // We store a simple counter with expiry.
-  const current = (await kv.get<number>(key)) ?? 0;
+  // ✅ Namespace by surface + action so authorize/remit do NOT collide.
+  const key = `rl:${opts.surface}:${opts.action}:${ip}`;
 
-  if (current >= limit) {
-    return { ok: false, retryAfterSeconds: windowSeconds };
+  const count = await kv.incr(key);
+
+  // ✅ Ensure TTL exists (only on first hit).
+  if (count === 1) {
+    await kv.expire(key, opts.windowSec);
   }
 
-  // increment and ensure expiry
-  const next = current + 1;
-
-  // If this is the first hit in the window, set with expiry.
-  if (current === 0) {
-    // setex-style: set then expire
-    await kv.set(key, next, { ex: windowSeconds });
-  } else {
-    // normal set (TTL continues)
-    await kv.set(key, next);
+  if (count > opts.limit) {
+    // Best-effort TTL lookup for Retry-After
+    const ttl = await kv.ttl(key).catch(() => -1);
+    return { ok: false, retryAfterSec: ttl > 0 ? ttl : opts.windowSec };
   }
 
-  return { ok: true, remaining: Math.max(0, limit - next), resetSeconds: windowSeconds };
+  return { ok: true, remaining: Math.max(0, opts.limit - count) };
 }

@@ -47,13 +47,20 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const rl = await rateLimit(req, "remit_patch", 20, 60);
-    if (!rl.ok) {
-      return NextResponse.json(
-        { error: "Rate limit exceeded. Try again soon." },
-        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
-      );
-    }
+const rl = await rateLimit({
+  surface: "remit",
+  action: "replace_proof", // same for link/replace
+  req,
+  limit: 20,
+  windowSec: 60,
+});
+
+if (!rl.ok) {
+  return NextResponse.json(
+    { error: "Rate limit exceeded. Try again soon." },
+    { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+  );
+}
 
     const { id } = await ctx.params;
     const body = await req.json();
