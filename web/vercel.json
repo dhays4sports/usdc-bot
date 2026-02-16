@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    
+   
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "remit.bot" }],
@@ -12,6 +12,17 @@
       "destination": "/remit/.well-known/agent.json"
     },
     {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "remit.bot" }],
+      "destination": "/remit/.well-known/agent.json"
+    },
+    {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.remit.bot" }],
+      "destination": "/remit/.well-known/agent.json"
+    },
+
+    {
       "source": "/.well-known/tools.json",
       "has": [{ "type": "host", "value": "remit.bot" }],
       "destination": "/remit/.well-known/tools.json"
@@ -21,7 +32,19 @@
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit/.well-known/tools.json"
     },
-   {
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "remit.bot" }],
+      "destination": "/remit/.well-known/tools.json"
+    },
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.remit.bot" }],
+      "destination": "/remit/.well-known/tools.json"
+    },
+
+   
+    {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "authorize.bot" }],
       "destination": "/authorize/.well-known/agent.json"
@@ -31,6 +54,17 @@
       "has": [{ "type": "host", "value": "www.authorize.bot" }],
       "destination": "/authorize/.well-known/agent.json"
     },
+    {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "authorize.bot" }],
+      "destination": "/authorize/.well-known/agent.json"
+    },
+    {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.authorize.bot" }],
+      "destination": "/authorize/.well-known/agent.json"
+    },
+
     {
       "source": "/.well-known/tools.json",
       "has": [{ "type": "host", "value": "authorize.bot" }],
@@ -39,10 +73,20 @@
     {
       "source": "/.well-known/tools.json",
       "has": [{ "type": "host", "value": "www.authorize.bot" }],
+      "destination": "/authorize/.well-known/tools.json"
+    },
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "authorize.bot" }],
+      "destination": "/authorize/.well-known/tools.json"
+    },
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.authorize.bot" }],
       "destination": "/authorize/.well-known/tools.json"
     },
 
-  
+   
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "payments.chat" }],
@@ -54,6 +98,17 @@
       "destination": "/payments/.well-known/agent.json"
     },
     {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "payments.chat" }],
+      "destination": "/payments/.well-known/agent.json"
+    },
+    {
+      "source": "/.well-known/agent.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.payments.chat" }],
+      "destination": "/payments/.well-known/agent.json"
+    },
+
+    {
       "source": "/.well-known/tools.json",
       "has": [{ "type": "host", "value": "payments.chat" }],
       "destination": "/payments/.well-known/tools.json"
@@ -63,8 +118,18 @@
       "has": [{ "type": "host", "value": "www.payments.chat" }],
       "destination": "/payments/.well-known/tools.json"
     },
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "payments.chat" }],
+      "destination": "/payments/.well-known/tools.json"
+    },
+    {
+      "source": "/.well-known/tools.json",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.payments.chat" }],
+      "destination": "/payments/.well-known/tools.json"
+    },
 
-    
+   
     {
       "source": "/",
       "has": [{ "type": "host", "value": "remit.bot" }],
@@ -77,6 +142,17 @@
     },
     {
       "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "remit.bot" }],
+      "destination": "/remit"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "remit.bot" }],
+      "destination": "/remit/:path*"
+    },
+
+    {
+      "source": "/",
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit"
     },
@@ -85,8 +161,18 @@
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit/:path*"
     },
+    {
+      "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.remit.bot" }],
+      "destination": "/remit"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.remit.bot" }],
+      "destination": "/remit/:path*"
+    },
 
-  
+   
     {
       "source": "/",
       "has": [{ "type": "host", "value": "authorize.bot" }],
@@ -99,6 +185,17 @@
     },
     {
       "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "authorize.bot" }],
+      "destination": "/authorize"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "authorize.bot" }],
+      "destination": "/authorize/:path*"
+    },
+
+    {
+      "source": "/",
       "has": [{ "type": "host", "value": "www.authorize.bot" }],
       "destination": "/authorize"
     },
@@ -107,8 +204,18 @@
       "has": [{ "type": "host", "value": "www.authorize.bot" }],
       "destination": "/authorize/:path*"
     },
+    {
+      "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.authorize.bot" }],
+      "destination": "/authorize"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.authorize.bot" }],
+      "destination": "/authorize/:path*"
+    },
 
-    
+   
     {
       "source": "/",
       "has": [{ "type": "host", "value": "payments.chat" }],
@@ -121,12 +228,33 @@
     },
     {
       "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "payments.chat" }],
+      "destination": "/payments"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "payments.chat" }],
+      "destination": "/payments/:path*"
+    },
+
+    {
+      "source": "/",
       "has": [{ "type": "host", "value": "www.payments.chat" }],
       "destination": "/payments"
     },
     {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "www.payments.chat" }],
+      "destination": "/payments/:path*"
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.payments.chat" }],
+      "destination": "/payments"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "www.payments.chat" }],
       "destination": "/payments/:path*"
     }
   ]
