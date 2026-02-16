@@ -27,6 +27,9 @@ export default async function Home() {
     redirect("/authorize");
   }
 
+  if (host === "payments.chat" || host === "www.payments.chat")
+    redirect("/payments");
+
   // Everything else stays EXACTLY the same
   return (
     <>
