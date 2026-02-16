@@ -9,9 +9,11 @@ import { resolveNameToAddress } from "@/lib/nameResolve";
 // - usdc.bot receipt URL: https://usdc.bot/e/<id>
 // - basescan tx URL: https://basescan.org/tx/<hash>
 // - raw tx hash: 0x...
-function parseSettlement(inputRaw: string):
+function parseSettlement(
+  inputRaw: string
+):
   | { type: "usdc_bot_receipt"; value: string }
-  | { type: "tx_hash"; value: `0x${string}` }
+  | { type: "basescan_tx"; value: `0x${string}` }
   | undefined {
   const input = inputRaw.trim();
   if (!input) return undefined;
@@ -28,13 +30,13 @@ function parseSettlement(inputRaw: string):
     const parts = input.split("/tx/");
     const hash = parts[1]?.split("?")[0]?.split("#")[0]?.trim();
     if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) {
-      return { type: "tx_hash", value: hash as `0x${string}` };
+      return { type: "basescan_tx", value: hash as `0x${string}` };
     }
   }
 
   // raw tx hash
   if (/^0x[a-fA-F0-9]{64}$/.test(input)) {
-    return { type: "tx_hash", value: input as `0x${string}` };
+    return { type: "basescan_tx", value: input as `0x${string}` };
   }
 
   return undefined;
@@ -42,7 +44,9 @@ function parseSettlement(inputRaw: string):
 
 export default function NewRemit() {
   const [recipientInput, setRecipientInput] = useState("");
-  const [recipientAddress, setRecipientAddress] = useState<`0x${string}` | null>(null);
+  const [recipientAddress, setRecipientAddress] = useState<`0x${string}` | null>(
+    null
+  );
 
   const [resolveMsg, setResolveMsg] = useState(
     "Paste 0x, ENS (vitalik.eth), or Basename (name.base)."
@@ -79,7 +83,9 @@ export default function NewRemit() {
       const r = await resolveNameToAddress(v);
 
       if (r.ok) {
-        setRecipientAddress(r.address);
+        // r.address should already be 0x…; cast keeps TS happy
+        setRecipientAddress(r.address as `0x${string}`);
+
         // optional field; safe even if not present
         setAvatarUrl((r as any).avatarUrl ?? null);
 
@@ -105,22 +111,8 @@ export default function NewRemit() {
     try {
       const settlementObj = parseSettlement(settlement);
 
-const auth = await fetch("/api/authorize", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    action: "remit.create",
-    amount: amount.trim(),
-    asset: "USDC",
-    recipient: recipientAddress,
-    context: { source: "remit.bot" },
-  }),
-}).then(r => r.json());
-
-if (!auth?.allow) {
-  throw new Error(auth?.reason || "Not authorized");
-}
-
+      // ✅ IMPORTANT: remit creation should call /api/remit
+      // ❌ Do NOT call /api/authorize here (that endpoint is for creating authorization records)
       const res = await fetch("/api/remit", {
         method: "POST",
         headers: { "content-type": "application/json" },
