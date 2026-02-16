@@ -31,7 +31,7 @@ export function getClientIp(req: Request): string {
  * - If count > limit, block.
  */
 export async function rateLimit(opts: {
-  surface: "remit" | "authorize";
+  surface: "remit" | "authorize | "payments";
   action: "create" | "link_proof" | "replace_proof" | "revoke";
   req: Request;
   limit: number; // max requests per window
