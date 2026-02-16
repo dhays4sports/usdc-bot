@@ -19,7 +19,7 @@ export default async function Home() {
       .trim();
 
   if (host === "remit.bot" || host === "www.remit.bot") redirect("/remit");
-  if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize");
+  if (host === "authorize.bot" || host === "www.authorize.bot") redirect("/authorize/new");
 
   // ...everything below stays identical
 
