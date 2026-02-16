@@ -1,8 +1,6 @@
 {
   "rewrites": [
-    // --------------------------
-    // remit.bot well-known
-    // --------------------------
+    
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "remit.bot" }],
@@ -23,11 +21,7 @@
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit/.well-known/tools.json"
     },
-
-    // --------------------------
-    // authorize.bot well-known
-    // --------------------------
-    {
+   {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "authorize.bot" }],
       "destination": "/authorize/.well-known/agent.json"
@@ -48,9 +42,7 @@
       "destination": "/authorize/.well-known/tools.json"
     },
 
-    // --------------------------
-    // payments.chat well-known
-    // --------------------------
+  
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "payments.chat" }],
@@ -72,9 +64,7 @@
       "destination": "/payments/.well-known/tools.json"
     },
 
-    // --------------------------
-    // remit.bot full routing
-    // --------------------------
+    
     {
       "source": "/",
       "has": [{ "type": "host", "value": "remit.bot" }],
@@ -96,9 +86,7 @@
       "destination": "/remit/:path*"
     },
 
-    // --------------------------
-    // authorize.bot full routing
-    // --------------------------
+  
     {
       "source": "/",
       "has": [{ "type": "host", "value": "authorize.bot" }],
@@ -120,9 +108,7 @@
       "destination": "/authorize/:path*"
     },
 
-    // --------------------------
-    // payments.chat full routing
-    // --------------------------
+    
     {
       "source": "/",
       "has": [{ "type": "host", "value": "payments.chat" }],
