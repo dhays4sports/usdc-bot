@@ -4,6 +4,14 @@ type RateLimitResult =
   | { ok: true; remaining?: number }
   | { ok: false; retryAfterSec: number };
 
+// ✅ 1) Put this HERE (near the top), so it becomes the single source of truth
+const SURFACES = ["remit", "authorize", "payments"] as const;
+type Surface = (typeof SURFACES)[number];
+
+// (Optional but recommended) do the same for actions
+const ACTIONS = ["create", "link_proof", "replace_proof", "revoke"] as const;
+type Action = (typeof ACTIONS)[number];
+
 function firstIpFromXForwardedFor(v: string) {
   // "1.2.3.4, 5.6.7.8" -> "1.2.3.4"
   return v.split(",")[0]?.trim();
@@ -31,8 +39,8 @@ export function getClientIp(req: Request): string {
  * - If count > limit, block.
  */
 export async function rateLimit(opts: {
-  surface: "remit" | "authorize | "payments";
-  action: "create" | "link_proof" | "replace_proof" | "revoke";
+  surface: Surface;     // ✅ replaces: "remit" | "authorize" | "payments"
+  action: Action;       // ✅ replaces: "create" | "link_proof" | ...
   req: Request;
   limit: number; // max requests per window
   windowSec: number; // window size
