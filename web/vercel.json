@@ -48,19 +48,9 @@
       "destination": "/remit"
     },
     {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "remit.bot" }],
-      "destination": "/remit/:path*"
-    },
-    {
       "source": "/",
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit"
-    },
-    {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "www.remit.bot" }],
-      "destination": "/remit/:path*"
     },
 
     {
@@ -69,19 +59,9 @@
       "destination": "/authorize"
     },
     {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "authorize.bot" }],
-      "destination": "/authorize/:path*"
-    },
-    {
       "source": "/",
       "has": [{ "type": "host", "value": "www.authorize.bot" }],
       "destination": "/authorize"
-    },
-    {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "www.authorize.bot" }],
-      "destination": "/authorize/:path*"
     }
   ]
 }
