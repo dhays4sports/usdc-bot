@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     const id = newAuthId();
     const createdAt = new Date().toISOString();
 
-    const spenderInput = String(body.spenderInput ?? "").trim();
+    const spenderInput = String(body.spenderInput ?? "").trim() || String(body.spenderAddress ?? "").trim();
     const spenderAddress = String(body.spenderAddress ?? "").trim();
     const scope = String(body.scope ?? "").trim() || "pay_usdc";
     const limit = String(body.limit ?? "").trim();
