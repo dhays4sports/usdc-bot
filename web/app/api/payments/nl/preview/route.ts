@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rateLimit";
 import { resolveNameToAddress } from "@/lib/nameResolve";
