@@ -4,8 +4,19 @@ import { rateLimit } from "@/lib/rateLimit";
 
 const KEY = (id: string) => `payment:${id}`;
 
+// TrustRoute v0.1 aggregate stats for this surface
+const TR_STATS_KEY = "tr:stats:payments.chat";
+
+async function trIncr(fields: Record<string, number>) {
+  try {
+    await kv.hincrby(TR_STATS_KEY, fields);
+    await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
+  } catch {
+    // Best-effort only
+  }
+}
+
 function newId() {
-  // simple id; you can replace with your existing id helper if you want
   return (
     Math.random().toString(36).slice(2, 12) +
     Math.random().toString(36).slice(2, 6)
@@ -75,7 +86,7 @@ export async function POST(req: Request) {
     } = {
       id,
       createdAt: new Date().toISOString(),
-      status: "proposed", // proposed → linked (proof) → settled (optional later)
+      status: "proposed",
       network: "base",
       asset: "USDC",
       amount,
@@ -84,13 +95,19 @@ export async function POST(req: Request) {
         input: payeeInput,
         address: payeeAddress as `0x${string}`,
       },
-      // leave undefined until proof is linked
       settlement: undefined,
       context: body?.context ?? undefined,
       version: "v0.1",
     };
 
     await kv.set(KEY(id), rec);
+
+    // TrustRoute v0.1: aggregate "created"
+    await trIncr({
+      totalCreated: 1,
+      proposed: 1,
+    });
+
     return NextResponse.json({ ok: true, id }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
