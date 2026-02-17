@@ -74,7 +74,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
     }
 
-    const r = await resolveNameToAddress(parsed.payeeInput);
+    const resolveUrl = new URL(`/api/resolve?input=${encodeURIComponent(parsed.payeeInput)}`, req.url);
+
+const rr = await fetch(resolveUrl, { method: "GET", cache: "no-store" });
+const rj = await rr.json().catch(() => null);
+
+if (!rj) return NextResponse.json({ error: "Resolver error." }, { status: 500 });
+if (!rj.ok) return NextResponse.json({ error: rj.message || "Could not resolve." }, { status: 400 });
+
+const payeeAddress = rj.address as `0x${string}`;
+const label = rj.label as string | undefined;
 
     // Build warnings + confidence
     const warnings: string[] = [];
