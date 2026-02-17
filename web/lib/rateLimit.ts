@@ -5,7 +5,7 @@ type RateLimitResult =
   | { ok: false; retryAfterSec: number };
 
 // ✅ 1) Put this HERE (near the top), so it becomes the single source of truth
-const SURFACES = ["remit", "authorize", "payments"] as const;
+const SURFACES = ["remit", "authorize", "payments", "invoice"] as const;
 type Surface = (typeof SURFACES)[number];
 
 // (Optional but recommended) do the same for actions
