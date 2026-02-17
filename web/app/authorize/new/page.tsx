@@ -77,7 +77,7 @@ export default function NewAuthorize() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed");
 
-      window.location.href = `/authorize/a/${json.id}`;
+      window.location.href = `/a/${json.id}`;
     } catch (e: any) {
       setErr(e?.message || "Failed to create record");
     } finally {
