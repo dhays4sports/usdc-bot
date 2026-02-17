@@ -1,8 +1,10 @@
 export const runtime = "nodejs";
 
+// web/app/api/payments/nl/preview/route.ts
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rateLimit";
-import { resolveNameToAddress } from "@/lib/nameResolve";
+
+export const runtime = "nodejs";
 
 function parseNL(raw: string): {
   amount: string;
@@ -10,9 +12,10 @@ function parseNL(raw: string): {
   payeeInput: string;
   memo?: string;
 } | null {
-  const s = raw.trim();
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
 
-  // Examples supported:
+  // Supports:
   // "send $50 usdc to device.eth"
   // "pay 12.5 usdc to vitalik.eth for coffee"
   // "send 50 to 0xabc... memo rent"
@@ -34,17 +37,15 @@ function parseNL(raw: string): {
   };
 }
 
-function isValidAmount(v: string) {
+function isPositiveAmount(v: string) {
   const n = Number(v);
-  return !!v && !isNaN(n) && n > 0;
+  return Number.isFinite(n) && n > 0;
 }
 
 export async function POST(req: Request) {
-  // ✅ Preview endpoint should NOT mint intents, so do NOT use action:"create"
-  // Use a softer bucket (or add "preview" to ACTIONS later).
   const rl = await rateLimit({
     surface: "payments",
-    action: "link_proof",
+    action: "create", // OK to reuse; or add "preview" later if you want
     req,
     limit: 60,
     windowSec: 60,
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({} as any));
     const prompt = String(body.prompt ?? "").trim();
     if (!prompt) return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
 
@@ -70,40 +71,76 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!isValidAmount(parsed.amount)) {
-      return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
-    }
-
-    const resolveUrl = new URL(`/api/resolve?input=${encodeURIComponent(parsed.payeeInput)}`, req.url);
-
-const rr = await fetch(resolveUrl, { method: "GET", cache: "no-store" });
-const rj = await rr.json().catch(() => null);
-
-if (!rj) return NextResponse.json({ error: "Resolver error." }, { status: 500 });
-if (!rj.ok) return NextResponse.json({ error: rj.message || "Could not resolve." }, { status: 400 });
-
-const payeeAddress = rj.address as `0x${string}`;
-const label = rj.label as string | undefined;
-
-    // Build warnings + confidence
     const warnings: string[] = [];
     let confidence = 0.92;
 
-    if (!r.ok) {
+    if (!isPositiveAmount(parsed.amount)) {
       confidence = 0.25;
-      warnings.push(r.message || "Could not resolve payee.");
-    } else {
-      // Heuristic: raw 0x gets higher confidence than name resolution
-      if (/^0x[a-fA-F0-9]{40}$/.test(parsed.payeeInput)) confidence = 0.98;
-      if (parsed.amount.includes(".")) warnings.push("Decimal amount detected — double-check.");
-      if (parsed.memo && parsed.memo.length > 180) warnings.push("Memo over 180 chars — it will be rejected.");
+      warnings.push("Invalid amount.");
     }
 
-    // ✅ IMPORTANT: do not write to KV; only return preview payload
+    // ✅ Server-side: resolve using ABSOLUTE URL (not /api/resolve relative)
+    const resolveUrl = new URL(
+      `/api/resolve?input=${encodeURIComponent(parsed.payeeInput)}`,
+      req.url
+    );
+
+    const rr = await fetch(resolveUrl, { method: "GET", cache: "no-store" });
+    const rj = await rr.json().catch(() => null);
+
+    if (!rj) {
+      confidence = 0.25;
+      warnings.push("Resolver error.");
+      return NextResponse.json(
+        {
+          ok: true,
+          payeeInput: parsed.payeeInput,
+          payeeAddress: null,
+          amount: parsed.amount,
+          memo: parsed.memo,
+          asset: "USDC",
+          network: "base",
+          confidence,
+          warnings,
+        },
+        { status: 200 }
+      );
+    }
+
+    if (!rj.ok) {
+      confidence = 0.25;
+      warnings.push(rj.message || "Could not resolve payee.");
+      return NextResponse.json(
+        {
+          ok: true,
+          payeeInput: parsed.payeeInput,
+          payeeAddress: null,
+          amount: parsed.amount,
+          memo: parsed.memo,
+          asset: "USDC",
+          network: "base",
+          confidence,
+          warnings,
+        },
+        { status: 200 }
+      );
+    }
+
+    const payeeAddress = rj.address as `0x${string}`;
+    const label = (rj.label as string | undefined) ?? undefined;
+
+    // Extra safety hint
+    if (!/^0x[a-fA-F0-9]{40}$/.test(payeeAddress)) {
+      confidence = 0.25;
+      warnings.push("Resolved address format looks invalid.");
+    }
+
     return NextResponse.json(
       {
+        ok: true,
         payeeInput: parsed.payeeInput,
-        payeeAddress: r.ok ? r.address : null,
+        payeeAddress,
+        label,
         amount: parsed.amount,
         memo: parsed.memo,
         asset: "USDC",
