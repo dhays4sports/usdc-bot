@@ -173,7 +173,7 @@ export default function AuthorizeReceipt() {
     { key: "revoked", label: "Revoked", ts: rec?.updatedAt, done: rec?.status === "revoked" },
   ]}
 />
-
+            <div style={{ marginBottom: 12 }} />
             <div className="subrow">
               <span>Status</span>
               <span style={{ fontWeight: 650 }}>{statusSentence}</span>
