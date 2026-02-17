@@ -60,7 +60,7 @@ export default function RemitReceipt() {
     if (!id) return;
     setLoading(true);
     try {
-      const res = await fetch(`/remit/api/remit/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/remit/${id}`, { cache: "no-store" });
       if (!res.ok) {
         setRec(null);
       } else {
@@ -104,7 +104,7 @@ export default function RemitReceipt() {
 
     setSaving(true);
     try {
-      const res = await fetch(`/remit/api/remit/${id}`, {
+      const res = await fetch(`/api/remit/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ settlement }),
