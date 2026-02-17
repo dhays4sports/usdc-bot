@@ -4,6 +4,18 @@ import { rateLimit } from "@/lib/rateLimit";
 
 const KEY = (id: string) => `payment:${id}`;
 
+// TrustRoute v0.1 aggregate stats for this surface
+const TR_STATS_KEY = "tr:stats:payments.chat";
+
+async function trIncr(fields: Record<string, number>) {
+  try {
+    await kv.hincrby(TR_STATS_KEY, fields);
+    await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
+  } catch {
+    // best-effort only
+  }
+}
+
 // Accept either:
 // - string: tx hash OR usdc.bot receipt OR basescan tx url
 // - object: { type, value }
@@ -97,12 +109,23 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const settlement = normalizeSettlement(body?.settlement ?? body?.proof);
     if (!settlement) return NextResponse.json({ error: "Invalid settlement" }, { status: 400 });
 
+    const prevStatus = String(existing?.status ?? "proposed");
+
     const updated = {
       ...existing,
       settlement,
       status: "linked",
       updatedAt: new Date().toISOString(),
     };
+
+    // TrustRoute v0.1: count transition (idempotent)
+    if (prevStatus !== "linked" && prevStatus !== "settled") {
+      await trIncr({
+        totalLinked: 1,
+        linked: 1,
+        proposed: -1,
+      });
+    }
 
     await kv.set(KEY(id), updated);
     return NextResponse.json({ ok: true }, { status: 200 });
