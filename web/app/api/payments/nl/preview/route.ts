@@ -1,5 +1,3 @@
-export const runtime = "nodejs";
-
 // web/app/api/payments/nl/preview/route.ts
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rateLimit";
