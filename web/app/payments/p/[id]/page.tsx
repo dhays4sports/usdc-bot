@@ -155,6 +155,12 @@ export default function PaymentReceipt() {
         <div className="centerStage">
           <div className="glassCard">
             <div className="cardTitle">PAYMENT INTENT</div>
+            <StatusTimeline
+  steps={[
+    { key: "created", label: "Created", ts: rec?.createdAt, done: true },
+    { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" },
+  ]}
+/>
 
             <p className="huge" style={{ marginTop: 6 }}>
               {rec.amount} <span style={{ fontSize: 18 }}>{rec.asset}</span>
