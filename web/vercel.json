@@ -1,6 +1,103 @@
 {
   "rewrites": [
-    
+   
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "remit.bot" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "remit.bot" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "remit.bot" }],
+      "destination": "/favicon.ico"
+    },
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "www.remit.bot" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "www.remit.bot" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "www.remit.bot" }],
+      "destination": "/favicon.ico"
+    },
+
+ 
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "authorize.bot" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "authorize.bot" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "authorize.bot" }],
+      "destination": "/favicon.ico"
+    },
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "www.authorize.bot" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "www.authorize.bot" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "www.authorize.bot" }],
+      "destination": "/favicon.ico"
+    },
+
+   
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "payments.chat" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "payments.chat" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "payments.chat" }],
+      "destination": "/favicon.ico"
+    },
+    {
+      "source": "/api/:path*",
+      "has": [{ "type": "host", "value": "www.payments.chat" }],
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/_next/:path*",
+      "has": [{ "type": "host", "value": "www.payments.chat" }],
+      "destination": "/_next/:path*"
+    },
+    {
+      "source": "/favicon.ico",
+      "has": [{ "type": "host", "value": "www.payments.chat" }],
+      "destination": "/favicon.ico"
+    },
+
+  
+
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "remit.bot" }],
@@ -21,7 +118,8 @@
       "has": [{ "type": "host", "value": "www.remit.bot" }],
       "destination": "/remit/.well-known/tools.json"
     },
-   {
+
+    {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "authorize.bot" }],
       "destination": "/authorize/.well-known/agent.json"
@@ -42,7 +140,6 @@
       "destination": "/authorize/.well-known/tools.json"
     },
 
-  
     {
       "source": "/.well-known/agent.json",
       "has": [{ "type": "host", "value": "payments.chat" }],
@@ -64,29 +161,29 @@
       "destination": "/payments/.well-known/tools.json"
     },
 
-    
-    {
-      "source": "/",
-      "has": [{ "type": "host", "value": "remit.bot" }],
-      "destination": "/remit"
-    },
-    {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "remit.bot" }],
-      "destination": "/remit/:path*"
-    },
-    {
-      "source": "/",
-      "has": [{ "type": "host", "value": "www.remit.bot" }],
-      "destination": "/remit"
-    },
-    {
-      "source": "/:path*",
-      "has": [{ "type": "host", "value": "www.remit.bot" }],
-      "destination": "/remit/:path*"
-    },
-
   
+
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "remit.bot" }],
+      "destination": "/remit"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "remit.bot" }],
+      "destination": "/remit/:path*"
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.remit.bot" }],
+      "destination": "/remit"
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.remit.bot" }],
+      "destination": "/remit/:path*"
+    },
+
     {
       "source": "/",
       "has": [{ "type": "host", "value": "authorize.bot" }],
@@ -108,7 +205,6 @@
       "destination": "/authorize/:path*"
     },
 
-    
     {
       "source": "/",
       "has": [{ "type": "host", "value": "payments.chat" }],
