@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { surfaceApi } from "@/lib/surfaceApi";
 import Header from "@/components/Header";
 import Link from "next/link";
 
