@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Header from "@/components/Header";
 import Link from "next/link";
+import StatusTimeline from "@/components/StatusTimeline";
 
 const BASESCAN = "https://basescan.org";
 
@@ -172,6 +173,13 @@ export default function RemitReceipt() {
         <div className="centerStage">
           <div className="glassCard">
             <div className="cardTitle">REMITTANCE RECEIPT</div>
+            <StatusTimeline
+  steps={[
+    { key: "created", label: "Created", ts: rec?.createdAt, done: true },
+    { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" || rec?.status === "settled" },
+    { key: "settled", label: "Settled (optional)", ts: rec?.settledAt, done: rec?.status === "settled" },
+  ]}
+/>
 
             <p className="huge" style={{ marginTop: 6 }}>
               {rec.amount}{" "}
