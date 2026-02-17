@@ -164,6 +164,8 @@ export default function AuthorizeReceipt() {
       <main className="container">
         <div className="centerStage">
           <div className="glassCard">
+            <div className="cardTitle">AUTHORIZATION RECEIPT</div>
+
             <StatusTimeline
   steps={[
     { key: "created", label: "Created", ts: rec?.createdAt, done: true },
@@ -171,7 +173,6 @@ export default function AuthorizeReceipt() {
     { key: "revoked", label: "Revoked", ts: rec?.updatedAt, done: rec?.status === "revoked" },
   ]}
 />
-            <div className="cardTitle">AUTHORIZATION RECEIPT</div>
 
             <div className="subrow">
               <span>Status</span>
