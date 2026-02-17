@@ -67,7 +67,7 @@ export default function NewPaymentIntent() {
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok) throw new Error(json?.error || "Failed to create payment intent");
 
-      window.location.href = `/payments/p/${json.id}`;
+      window.location.href = `/p/${json.id}`;
     } catch (e: any) {
       setErr(e?.message || "Failed");
     } finally {
