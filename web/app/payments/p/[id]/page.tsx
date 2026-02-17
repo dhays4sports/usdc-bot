@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Header from "@/components/Header";
+import StatusTimeline from "@/components/StatusTimeline";
 import Link from "next/link";
 
 const BASESCAN = "https://basescan.org";
