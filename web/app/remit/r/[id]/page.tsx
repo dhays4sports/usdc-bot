@@ -60,7 +60,7 @@ export default function RemitReceipt() {
     if (!id) return;
     setLoading(true);
     try {
-      const res = await fetch(surfaceApi(`/api/remit/${id}`), { cache: "no-store" });
+      const res = await fetch(`/remit/api/remit/${id}`, { cache: "no-store" });
       if (!res.ok) {
         setRec(null);
       } else {
