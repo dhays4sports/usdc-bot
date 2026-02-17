@@ -129,7 +129,7 @@ export default function NewRemit() {
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok) throw new Error(json?.error || "Failed");
 
-      window.location.href = `/remit/r/${json.id}`;
+      window.location.href = `/r/${json.id}`;
     } catch (e: any) {
       setErr(e?.message || "Failed to create record");
     } finally {
