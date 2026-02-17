@@ -206,7 +206,13 @@ export default function NewPaymentIntent() {
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok) throw new Error(json?.error || "Failed to create payment intent");
 
-      window.location.href = `/p/${json.id}`;
+      const host = window.location.host.toLowerCase();
+
+// If you're on payments.chat, the public path is /p/:id
+// Otherwise (root app), the path is /payments/p/:id
+const prefix = host === "payments.chat" || host === "www.payments.chat" ? "" : "/payments";
+
+window.location.href = `${prefix}/p/${json.id}`;
     } catch (e: any) {
       setErr(e?.message || "Failed");
     } finally {
