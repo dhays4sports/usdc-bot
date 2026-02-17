@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Header from "@/components/Header";
+import StatusTimeline from "@/components/StatusTimeline";
 import Link from "next/link";
 
 const BASESCAN = "https://basescan.org";
@@ -163,6 +164,13 @@ export default function AuthorizeReceipt() {
       <main className="container">
         <div className="centerStage">
           <div className="glassCard">
+            <StatusTimeline
+  steps={[
+    { key: "created", label: "Created", ts: rec?.createdAt, done: true },
+    { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" || rec?.status === "revoked" },
+    { key: "revoked", label: "Revoked", ts: rec?.updatedAt, done: rec?.status === "revoked" },
+  ]}
+/>
             <div className="cardTitle">AUTHORIZATION RECEIPT</div>
 
             <div className="subrow">
