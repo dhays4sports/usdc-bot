@@ -1,20 +1,28 @@
+// web/app/payments/new/page.tsx (or wherever this component lives)
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/components/Header";
 import Link from "next/link";
 import { resolveNameToAddress } from "@/lib/nameResolve";
 
 type PreviewResponse = {
+  ok?: boolean;
   payeeInput: string;
   payeeAddress: `0x${string}` | null;
-  amount: string; // keep as string to match your form + API
+  label?: string;
+  amount: string;
   memo?: string;
   asset: "USDC";
   network: "base";
-  confidence: number; // 0..1
+  confidence: number;
   warnings: string[];
 };
+
+function short(addr?: string | null) {
+  if (!addr) return "—";
+  return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
 
 export default function NewPaymentIntent() {
   // ✅ Command → Preview
@@ -22,6 +30,9 @@ export default function NewPaymentIntent() {
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [commandErr, setCommandErr] = useState<string | null>(null);
+
+  // "Applied" means: the current form fields were populated from this preview
+  const [previewApplied, setPreviewApplied] = useState(false);
 
   // Existing manual fields
   const [payeeInput, setPayeeInput] = useState("");
@@ -34,26 +45,63 @@ export default function NewPaymentIntent() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Keep a snapshot of what Preview applied so we can detect edits and invalidate
+  const appliedSnapshotRef = useRef<{
+    payeeInput: string;
+    payeeAddress: string | null;
+    amount: string;
+    memo: string;
+  } | null>(null);
+
   const canSubmit = useMemo(() => {
     const n = Number(amount);
     return !!payeeAddress && !!amount && !isNaN(n) && n > 0 && memo.length <= 180;
   }, [payeeAddress, amount, memo]);
 
   function applyPreview(p: PreviewResponse) {
-    // Populate your existing fields (this is the whole point of the UX)
+    // Populate fields
     setPayeeInput(p.payeeInput ?? "");
     setPayeeAddress(p.payeeAddress ?? null);
     setAmount(String(p.amount ?? ""));
     setMemo(String(p.memo ?? ""));
 
-    // Update resolveMsg to reflect the resolved address
+    // Update resolveMsg to reflect the resolved address clearly
     if (p.payeeAddress) {
-      const label = p.payeeInput ? `${p.payeeInput} → ` : "";
-      setResolveMsg(`${label}${p.payeeAddress.slice(0, 6)}…${p.payeeAddress.slice(-4)}`);
+      const left = (p.label ?? p.payeeInput ?? "").trim();
+      const prefix = left ? `${left} → ` : "";
+      setResolveMsg(`${prefix}${short(p.payeeAddress)}`);
     } else {
       setResolveMsg("Could not resolve payee address.");
     }
+
+    // Mark as applied + store snapshot
+    setPreviewApplied(true);
+    appliedSnapshotRef.current = {
+      payeeInput: String(p.payeeInput ?? ""),
+      payeeAddress: p.payeeAddress ?? null,
+      amount: String(p.amount ?? ""),
+      memo: String(p.memo ?? ""),
+    };
   }
+
+  // If user edits fields after Preview was applied, invalidate "applied"
+  useEffect(() => {
+    if (!previewApplied) return;
+
+    const snap = appliedSnapshotRef.current;
+    if (!snap) return;
+
+    const changed =
+      snap.payeeInput !== payeeInput ||
+      (snap.payeeAddress ?? null) !== (payeeAddress ?? null) ||
+      snap.amount !== amount ||
+      snap.memo !== memo;
+
+    if (changed) {
+      setPreviewApplied(false);
+      appliedSnapshotRef.current = null;
+    }
+  }, [payeeInput, payeeAddress, amount, memo, previewApplied]);
 
   async function onPreviewCommand() {
     setCommandErr(null);
@@ -78,18 +126,21 @@ export default function NewPaymentIntent() {
       if (!res.ok) throw new Error(json?.error || "Failed to preview command");
 
       const p = json as PreviewResponse;
+      setPreview(p);
 
-      // Basic guardrails
+      // Guardrails: must resolve to an address to apply
       if (!p?.payeeAddress) {
-        setPreview(p);
+        setPreviewApplied(false);
+        appliedSnapshotRef.current = null;
         setCommandErr("Preview failed: could not resolve recipient. Fix the command and try again.");
         return;
       }
 
-      setPreview(p);
       applyPreview(p);
     } catch (e: any) {
       setPreview(null);
+      setPreviewApplied(false);
+      appliedSnapshotRef.current = null;
       setCommandErr(e?.message || "Failed to preview");
     } finally {
       setPreviewing(false);
@@ -98,20 +149,24 @@ export default function NewPaymentIntent() {
 
   async function onResolve() {
     setErr(null);
+
+    // Manual edit should invalidate preview-applied (handled by effect),
+    // but we also clear the command error for clarity
+    setCommandErr(null);
+
     const v = payeeInput.trim();
     if (!v) {
       setPayeeAddress(null);
       setResolveMsg("Enter a wallet address or name.");
       return;
     }
+
     setResolveMsg("Resolving…");
     try {
       const r = await resolveNameToAddress(v);
       if (r.ok) {
         setPayeeAddress(r.address);
-        setResolveMsg(
-          `${r.label ? r.label + " → " : ""}${r.address.slice(0, 6)}…${r.address.slice(-4)}`
-        );
+        setResolveMsg(`${r.label ? r.label + " → " : ""}${short(r.address)}`);
       } else {
         setPayeeAddress(null);
         setResolveMsg(r.message);
@@ -140,10 +195,10 @@ export default function NewPaymentIntent() {
           network: "base",
           context: {
             source: "payments.chat",
-            // optional: keep an audit trail of how the form was populated
-            fromCommand: preview ? command.trim() : undefined,
-            previewConfidence: preview?.confidence,
-            previewWarnings: preview?.warnings,
+            // audit trail
+            fromCommand: previewApplied ? command.trim() : undefined,
+            previewConfidence: previewApplied ? preview?.confidence : undefined,
+            previewWarnings: previewApplied ? preview?.warnings : undefined,
           },
         }),
       });
@@ -181,7 +236,10 @@ export default function NewPaymentIntent() {
 
                 <input
                   value={command}
-                  onChange={(e) => setCommand(e.target.value)}
+                  onChange={(e) => {
+                    setCommand(e.target.value);
+                    setCommandErr(null);
+                  }}
                   placeholder='send $50 usdc to device.eth'
                 />
 
@@ -189,6 +247,12 @@ export default function NewPaymentIntent() {
                   <button onClick={onPreviewCommand} disabled={previewing}>
                     {previewing ? "Previewing…" : "Preview"}
                   </button>
+
+                  {previewApplied ? (
+                    <div style={{ fontSize: 12, opacity: 0.75, alignSelf: "center" }}>
+                      ✅ Preview applied to form
+                    </div>
+                  ) : null}
 
                   <div style={{ fontSize: 12, opacity: 0.6, alignSelf: "center" }}>
                     Example: <span style={{ opacity: 0.9 }}>send $50 usdc to device.eth</span>
@@ -201,8 +265,11 @@ export default function NewPaymentIntent() {
 
                     <div>
                       <span style={{ opacity: 0.75 }}>To:</span>{" "}
+                      <span style={{ opacity: 0.9 }}>
+                        {(preview.label ?? preview.payeeInput) ? `${preview.label ?? preview.payeeInput} → ` : ""}
+                      </span>
                       <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                        {preview.payeeAddress ?? "—"}
+                        {preview.payeeAddress ? short(preview.payeeAddress) : "—"}
                       </span>
                     </div>
 
@@ -243,7 +310,7 @@ export default function NewPaymentIntent() {
 
               <div className="divider" style={{ margin: "6px 0" }} />
 
-              {/* Existing manual form (now acts as the "Preview result editor") */}
+              {/* Manual fields: acts as the Preview result editor */}
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Payee</div>
                 <input
