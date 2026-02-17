@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import { createPublicClient, http, isAddress, fallback } from "viem";
 import { mainnet } from "viem/chains";
