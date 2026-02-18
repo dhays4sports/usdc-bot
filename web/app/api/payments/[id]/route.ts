@@ -9,7 +9,9 @@ const TR_STATS_KEY = "tr:stats:payments.chat";
 
 async function trIncr(fields: Record<string, number>) {
   try {
-    await kv.hincrby(TR_STATS_KEY, fields);
+    await Promise.all(
+      Object.entries(fields).map(([field, inc]) => kv.hincrby(TR_STATS_KEY, field, inc))
+    );
     await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
   } catch {
     // best-effort only
