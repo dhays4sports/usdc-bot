@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { rateLimit } from "@/lib/rateLimit";
 
+export const runtime = "nodejs";
+
 const KEY = (id: string) => `payment:${id}`;
 
 // TrustRoute v0.1 aggregate stats for this surface
@@ -9,10 +11,13 @@ const TR_STATS_KEY = "tr:stats:payments.chat";
 
 async function trIncr(fields: Record<string, number>) {
   try {
-    await kv.hincrby(TR_STATS_KEY, "intentsCreated", 1);
-await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
+    // Vercel KV: hincrby(key, field, increment)
+    await Promise.all(
+      Object.entries(fields).map(([field, inc]) => kv.hincrby(TR_STATS_KEY, field, inc))
+    );
+    await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
   } catch {
-    // Best-effort only
+    // best-effort only
   }
 }
 
@@ -56,7 +61,10 @@ export async function POST(req: Request) {
     const memo = String(body.memo ?? "").trim();
 
     if (!is0x40(payeeAddress)) {
-      return NextResponse.json({ error: "Invalid payee address" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid payee address" },
+        { status: 400 }
+      );
     }
 
     const n = Number(amount);
@@ -100,13 +108,11 @@ export async function POST(req: Request) {
       version: "v0.1",
     };
 
+    // ✅ Write the intent
     await kv.set(KEY(id), rec);
 
-    // TrustRoute v0.1: aggregate "created"
-    await trIncr({
-      totalCreated: 1,
-      proposed: 1,
-    });
+    // ✅ TrustRoute v0.1: aggregate "created" (simple counter only)
+    await trIncr({ intentsCreated: 1 });
 
     return NextResponse.json({ ok: true, id }, { status: 200 });
   } catch (err: any) {
