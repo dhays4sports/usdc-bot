@@ -9,8 +9,8 @@ const TR_STATS_KEY = "tr:stats:payments.chat";
 
 async function trIncr(fields: Record<string, number>) {
   try {
-    await kv.hincrby(TR_STATS_KEY, fields);
-    await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
+    await kv.hincrby(TR_STATS_KEY, "intentsCreated", 1);
+await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
   } catch {
     // Best-effort only
   }
