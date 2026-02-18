@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/components/Header";
 import Link from "next/link";
 import { resolveNameToAddress } from "@/lib/nameResolve";
+import TrustRoutePanel from "@/components/TrustRoutePanel";
 
 type PreviewResponse = {
   ok?: boolean;
@@ -313,6 +314,8 @@ window.location.href = `${prefix}/p/${json.id}`;
                   </div>
                 ) : null}
               </div>
+
+              <TrustRoutePanel surface="payments.chat" />
 
               <div className="divider" style={{ margin: "6px 0" }} />
 
