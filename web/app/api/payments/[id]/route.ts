@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { rateLimit } from "@/lib/rateLimit";
 
+export const runtime = "nodejs";
+
 const KEY = (id: string) => `payment:${id}`;
 
 // TrustRoute v0.1 aggregate stats for this surface
@@ -9,6 +11,7 @@ const TR_STATS_KEY = "tr:stats:payments.chat";
 
 async function trIncr(fields: Record<string, number>) {
   try {
+    // Vercel KV: hincrby(key, field, increment)
     await Promise.all(
       Object.entries(fields).map(([field, inc]) => kv.hincrby(TR_STATS_KEY, field, inc))
     );
@@ -120,16 +123,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       updatedAt: new Date().toISOString(),
     };
 
-    // TrustRoute v0.1: count transition (idempotent)
+    // ✅ Write the record first
+    await kv.set(KEY(id), updated);
+
+    // ✅ TrustRoute v0.1: count the status transition (idempotent)
+    // Only count if we are transitioning into linked for the first time.
     if (prevStatus !== "linked" && prevStatus !== "settled") {
-      await trIncr({
-        totalLinked: 1,
-        linked: 1,
-        proposed: -1,
-      });
+      await trIncr({ proofsLinked: 1 });
     }
 
-    await kv.set(KEY(id), updated);
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
