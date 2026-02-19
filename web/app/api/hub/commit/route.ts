@@ -6,6 +6,9 @@ export const runtime = "nodejs";
 
 const SECRET = process.env.HUB_HANDOFF_SECRET?.trim() || "";
 
+// ✅ Only allow routing to known surfaces
+const ALLOWED_AUD = new Set(["payments.chat", "invoice.chat", "refund.chat"] as const);
+
 function b64url(buf: Buffer) {
   return buf
     .toString("base64")
@@ -26,35 +29,47 @@ function nonce() {
 }
 
 type CommitBody = {
-  intent: string; // e.g. "pay"
-  route: {
-    aud: string;   // e.g. "payments.chat"
-    path: string;  // e.g. "/new" or "/payments/new" depending on how you route on that host
-  };
-  fields: {
-    payeeInput?: string;
-    payeeAddress?: `0x${string}` | null;
-    label?: string;
-    amount?: string;
-    memo?: string;
-    asset?: string;
-    network?: string;
-  };
+  intent?: string;
+
+  // ✅ support BOTH styles:
+  // new UI: { aud, path }
+  aud?: string;
+  path?: string;
+
+  // older spec: { route: { aud, path } }
+  // newer preview naming: { route: { surface, path } }
+  route?: { aud?: string; surface?: string; path?: string };
+
+  fields?: Record<string, any>;
   context?: any;
 };
 
+function isSafePath(p: string) {
+  // Must be a relative path like "/new" (not "https://...", not "//evil.com")
+  return p.startsWith("/") && !p.startsWith("//") && !p.includes("://");
+}
+
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Partial<CommitBody>;
+    const body = (await req.json().catch(() => ({}))) as CommitBody;
 
     const intent = String(body.intent ?? "").trim();
-    const aud = String(body.route?.aud ?? "").trim();
-    const path = String(body.route?.path ?? "").trim();
+
+    // ✅ Accept aud from: body.aud OR body.route.aud OR body.route.surface
+    const aud = String(body.aud ?? body.route?.aud ?? body.route?.surface ?? "").trim().toLowerCase();
+
+    // ✅ Accept path from: body.path OR body.route.path
+    const path = String(body.path ?? body.route?.path ?? "").trim();
 
     if (!intent) return NextResponse.json({ error: "Missing intent" }, { status: 400 });
     if (!aud) return NextResponse.json({ error: "Missing route.aud" }, { status: 400 });
-    if (!path.startsWith("/")) {
-      return NextResponse.json({ error: "route.path must start with /" }, { status: 400 });
+
+    if (!ALLOWED_AUD.has(aud as any)) {
+      return NextResponse.json({ error: "Invalid route.aud" }, { status: 400 });
+    }
+
+    if (!path || !isSafePath(path)) {
+      return NextResponse.json({ error: "route.path must be a safe relative path starting with /" }, { status: 400 });
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -73,7 +88,9 @@ export async function POST(req: Request) {
     };
 
     const token = sign(payload);
-    const redirect = `${path}?h=${encodeURIComponent(token)}`;
+
+    // ✅ IMPORTANT: Redirect to the target SURFACE, not a relative path on hub.chat
+    const redirect = `https://${aud}${path}?h=${encodeURIComponent(token)}`;
 
     return NextResponse.json({ ok: true, redirect, ttlSec }, { status: 200 });
   } catch (err: any) {
