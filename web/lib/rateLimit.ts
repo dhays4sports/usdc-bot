@@ -1,16 +1,27 @@
+// web/lib/rateLimit.ts
 import { kv } from "@vercel/kv";
 
 type RateLimitResult =
   | { ok: true; remaining?: number }
   | { ok: false; retryAfterSec: number };
 
-// ✅ 1) Put this HERE (near the top), so it becomes the single source of truth
-const SURFACES = ["remit", "authorize", "payments", "invoice"] as const;
-type Surface = (typeof SURFACES)[number];
+// ✅ Single source of truth
+// Add the surfaces you’re actively using + hub/refund for routing.
+const SURFACES = ["remit", "authorize", "payments", "invoice", "refund", "hub"] as const;
+export type Surface = (typeof SURFACES)[number];
 
-// (Optional but recommended) do the same for actions
-const ACTIONS = ["create", "link_proof", "replace_proof", "revoke"] as const;
-type Action = (typeof ACTIONS)[number];
+// ✅ Actions: include preview/commit/accept for hub handoffs.
+// Keep the existing ones so you don’t break current routes.
+const ACTIONS = [
+  "create",
+  "preview",
+  "commit",
+  "accept",
+  "link_proof",
+  "replace_proof",
+  "revoke",
+] as const;
+export type Action = (typeof ACTIONS)[number];
 
 function firstIpFromXForwardedFor(v: string) {
   // "1.2.3.4, 5.6.7.8" -> "1.2.3.4"
@@ -39,15 +50,15 @@ export function getClientIp(req: Request): string {
  * - If count > limit, block.
  */
 export async function rateLimit(opts: {
-  surface: Surface;     // ✅ replaces: "remit" | "authorize" | "payments"
-  action: Action;       // ✅ replaces: "create" | "link_proof" | ...
+  surface: Surface;
+  action: Action;
   req: Request;
   limit: number; // max requests per window
   windowSec: number; // window size
 }): Promise<RateLimitResult> {
   const ip = getClientIp(opts.req);
 
-  // ✅ Namespace by surface + action so authorize/remit do NOT collide.
+  // ✅ Namespace by surface + action so hubs/surfaces do NOT collide.
   const key = `rl:${opts.surface}:${opts.action}:${ip}`;
 
   const count = await kv.incr(key);
