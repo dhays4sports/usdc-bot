@@ -1,11 +1,11 @@
-// web/app/payments/new/page.tsx (or wherever this component lives)
+// web/app/payments/new/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/components/Header";
 import Link from "next/link";
 import { resolveNameToAddress } from "@/lib/nameResolve";
-import TrustRoutePanel from "@/components/TrustRoutePanel";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type PreviewResponse = {
   ok?: boolean;
@@ -20,19 +20,37 @@ type PreviewResponse = {
   warnings: string[];
 };
 
+type AcceptResponse = {
+  ok: true;
+  intent: string;
+  fields: {
+    payeeInput: string;
+    payeeAddress: `0x${string}`;
+    amount: string;
+    memo?: string;
+    asset: "USDC";
+    network: "base";
+    label?: string;
+  };
+  context?: any;
+};
+
 function short(addr?: string | null) {
   if (!addr) return "—";
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
 export default function NewPaymentIntent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   // ✅ Command → Preview
   const [command, setCommand] = useState("send $50 usdc to device.eth");
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [commandErr, setCommandErr] = useState<string | null>(null);
 
-  // "Applied" means: the current form fields were populated from this preview
+  // "Applied" means: the current form fields were populated from preview OR hub handoff
   const [previewApplied, setPreviewApplied] = useState(false);
 
   // Existing manual fields
@@ -46,7 +64,7 @@ export default function NewPaymentIntent() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Keep a snapshot of what Preview applied so we can detect edits and invalidate
+  // Snapshot of what was applied so edits invalidate
   const appliedSnapshotRef = useRef<{
     payeeInput: string;
     payeeAddress: string | null;
@@ -59,36 +77,86 @@ export default function NewPaymentIntent() {
     return !!payeeAddress && !!amount && !isNaN(n) && n > 0 && memo.length <= 180;
   }, [payeeAddress, amount, memo]);
 
-  function applyPreview(p: PreviewResponse) {
-    // Populate fields
-    setPayeeInput(p.payeeInput ?? "");
-    setPayeeAddress(p.payeeAddress ?? null);
-    setAmount(String(p.amount ?? ""));
-    setMemo(String(p.memo ?? ""));
+  function applyFields(args: {
+    payeeInput: string;
+    payeeAddress: `0x${string}` | null;
+    amount: string;
+    memo?: string;
+    label?: string;
+  }) {
+    setPayeeInput(args.payeeInput ?? "");
+    setPayeeAddress(args.payeeAddress ?? null);
+    setAmount(String(args.amount ?? ""));
+    setMemo(String(args.memo ?? ""));
 
-    // Update resolveMsg to reflect the resolved address clearly
-    if (p.payeeAddress) {
-      const left = (p.label ?? p.payeeInput ?? "").trim();
+    if (args.payeeAddress) {
+      const left = (args.label ?? args.payeeInput ?? "").trim();
       const prefix = left ? `${left} → ` : "";
-      setResolveMsg(`${prefix}${short(p.payeeAddress)}`);
+      setResolveMsg(`${prefix}${short(args.payeeAddress)}`);
     } else {
       setResolveMsg("Could not resolve payee address.");
     }
 
-    // Mark as applied + store snapshot
     setPreviewApplied(true);
     appliedSnapshotRef.current = {
-      payeeInput: String(p.payeeInput ?? ""),
-      payeeAddress: p.payeeAddress ?? null,
-      amount: String(p.amount ?? ""),
-      memo: String(p.memo ?? ""),
+      payeeInput: String(args.payeeInput ?? ""),
+      payeeAddress: args.payeeAddress ?? null,
+      amount: String(args.amount ?? ""),
+      memo: String(args.memo ?? ""),
     };
   }
 
-  // If user edits fields after Preview was applied, invalidate "applied"
+  // ✅ Hub handoff: accept token from ?h=... and apply fields
+  useEffect(() => {
+    const token = searchParams.get("h");
+    if (!token) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setErr(null);
+      setCommandErr(null);
+
+      try {
+        const res = await fetch("/api/payments/accept", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+
+        const json = (await res.json().catch(() => ({}))) as any;
+        if (!res.ok || !json?.ok) throw new Error(json?.error || "Handoff failed");
+
+        const data = json as AcceptResponse;
+        if (cancelled) return;
+
+        applyFields({
+          payeeInput: data.fields.payeeInput,
+          payeeAddress: data.fields.payeeAddress,
+          amount: data.fields.amount,
+          memo: data.fields.memo,
+          label: data.fields.label,
+        });
+
+        // Clear token from URL (prevents refresh from re-consuming)
+        const host = window.location.host.toLowerCase();
+        const prefix = host === "payments.chat" || host === "www.payments.chat" ? "" : "/payments";
+        router.replace(`${prefix}/new`);
+      } catch (e: any) {
+        if (cancelled) return;
+        setErr(e?.message || "Failed to accept hub handoff");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // If user edits fields after apply, invalidate
   useEffect(() => {
     if (!previewApplied) return;
-
     const snap = appliedSnapshotRef.current;
     if (!snap) return;
 
@@ -116,7 +184,6 @@ export default function NewPaymentIntent() {
 
     setPreviewing(true);
     try {
-      // ✅ Parse-only endpoint: does NOT write to KV
       const res = await fetch("/api/payments/nl/preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -129,7 +196,6 @@ export default function NewPaymentIntent() {
       const p = json as PreviewResponse;
       setPreview(p);
 
-      // Guardrails: must resolve to an address to apply
       if (!p?.payeeAddress) {
         setPreviewApplied(false);
         appliedSnapshotRef.current = null;
@@ -137,7 +203,13 @@ export default function NewPaymentIntent() {
         return;
       }
 
-      applyPreview(p);
+      applyFields({
+        payeeInput: p.payeeInput,
+        payeeAddress: p.payeeAddress,
+        amount: p.amount,
+        memo: p.memo,
+        label: p.label,
+      });
     } catch (e: any) {
       setPreview(null);
       setPreviewApplied(false);
@@ -150,9 +222,6 @@ export default function NewPaymentIntent() {
 
   async function onResolve() {
     setErr(null);
-
-    // Manual edit should invalidate preview-applied (handled by effect),
-    // but we also clear the command error for clarity
     setCommandErr(null);
 
     const v = payeeInput.trim();
@@ -196,7 +265,6 @@ export default function NewPaymentIntent() {
           network: "base",
           context: {
             source: "payments.chat",
-            // audit trail
             fromCommand: previewApplied ? command.trim() : undefined,
             previewConfidence: previewApplied ? preview?.confidence : undefined,
             previewWarnings: previewApplied ? preview?.warnings : undefined,
@@ -208,12 +276,8 @@ export default function NewPaymentIntent() {
       if (!res.ok) throw new Error(json?.error || "Failed to create payment intent");
 
       const host = window.location.host.toLowerCase();
-
-// If you're on payments.chat, the public path is /p/:id
-// Otherwise (root app), the path is /payments/p/:id
-const prefix = host === "payments.chat" || host === "www.payments.chat" ? "" : "/payments";
-
-window.location.href = `${prefix}/p/${json.id}`;
+      const prefix = host === "payments.chat" || host === "www.payments.chat" ? "" : "/payments";
+      window.location.href = `${prefix}/p/${json.id}`;
     } catch (e: any) {
       setErr(e?.message || "Failed");
     } finally {
@@ -273,7 +337,9 @@ window.location.href = `${prefix}/p/${json.id}`;
                     <div>
                       <span style={{ opacity: 0.75 }}>To:</span>{" "}
                       <span style={{ opacity: 0.9 }}>
-                        {(preview.label ?? preview.payeeInput) ? `${preview.label ?? preview.payeeInput} → ` : ""}
+                        {(preview.label ?? preview.payeeInput)
+                          ? `${preview.label ?? preview.payeeInput} → `
+                          : ""}
                       </span>
                       <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
                         {preview.payeeAddress ? short(preview.payeeAddress) : "—"}
@@ -315,11 +381,10 @@ window.location.href = `${prefix}/p/${json.id}`;
                 ) : null}
               </div>
 
-              <TrustRoutePanel surface="payments.chat" />
+              {/* ✅ TrustRoute UI removed */}
 
               <div className="divider" style={{ margin: "6px 0" }} />
 
-              {/* Manual fields: acts as the Preview result editor */}
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Payee</div>
                 <input
@@ -347,7 +412,6 @@ window.location.href = `${prefix}/p/${json.id}`;
 
               {err ? <div style={{ fontSize: 12, opacity: 0.9 }}>Error: {err}</div> : null}
 
-              {/* ✅ Create is still the only KV-write step */}
               <button onClick={onCreate} disabled={!canSubmit || submitting}>
                 {submitting ? "Creating…" : "Create intent"}
               </button>
