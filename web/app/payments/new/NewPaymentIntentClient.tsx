@@ -1,4 +1,4 @@
-// web/app/payments/new/page.tsx
+// web/app/payments/new/NewPaymentIntentClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -40,7 +40,7 @@ function short(addr?: string | null) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-export default function NewPaymentIntent() {
+export default function NewPaymentIntentClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -50,10 +50,10 @@ export default function NewPaymentIntent() {
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [commandErr, setCommandErr] = useState<string | null>(null);
 
-  // "Applied" means: the current form fields were populated from preview OR hub handoff
+  // "Applied" means: current form fields were populated from preview OR hub handoff
   const [previewApplied, setPreviewApplied] = useState(false);
 
-  // Existing manual fields
+  // Manual fields
   const [payeeInput, setPayeeInput] = useState("");
   const [payeeAddress, setPayeeAddress] = useState<`0x${string}` | null>(null);
   const [resolveMsg, setResolveMsg] = useState("Paste 0x, ENS, or Basename.");
@@ -106,10 +106,16 @@ export default function NewPaymentIntent() {
     };
   }
 
-  // ✅ Hub handoff: accept token from ?h=... and apply fields
+  // ✅ Hub handoff: accept token from ?h=...
+  // Use a ref so we don't re-consume on rerenders.
+  const consumedTokenRef = useRef<string | null>(null);
+
   useEffect(() => {
     const token = searchParams.get("h");
     if (!token) return;
+    if (consumedTokenRef.current === token) return;
+
+    consumedTokenRef.current = token;
 
     let cancelled = false;
 
@@ -151,8 +157,9 @@ export default function NewPaymentIntent() {
     return () => {
       cancelled = true;
     };
+    // Depend on the string value only, not the searchParams object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [router, searchParams.get("h")]);
 
   // If user edits fields after apply, invalidate
   useEffect(() => {
@@ -294,7 +301,7 @@ export default function NewPaymentIntent() {
             <div className="cardTitle">NEW PAYMENT INTENT</div>
 
             <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-              {/* ✅ Command → Preview */}
+              {/* Command → Preview */}
               <div
                 style={{
                   padding: 12,
@@ -381,7 +388,7 @@ export default function NewPaymentIntent() {
                 ) : null}
               </div>
 
-              {/* ✅ TrustRoute UI removed */}
+              {/* TrustRoute UI removed */}
 
               <div className="divider" style={{ margin: "6px 0" }} />
 
