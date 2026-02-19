@@ -65,33 +65,39 @@ export async function POST(req: Request) {
     const v = verify(token);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
 
-    const p = v.payload;
+    const p = v.payload ?? {};
 
     // issuer + audience checks
     if (String(p.iss ?? "") !== "hub.chat") {
       return NextResponse.json({ error: "Wrong issuer" }, { status: 400 });
     }
 
-    const aud = String(p.aud ?? "");
-    if (aud !== "payments.chat" && aud !== "www.payments.chat") {
+    // ✅ Keep aud strict (commit emits "payments.chat")
+    const aud = String(p.aud ?? "").toLowerCase();
+    if (aud !== "payments.chat") {
       return NextResponse.json({ error: "Wrong audience" }, { status: 400 });
     }
 
-    // TTL
+    // TTL (allow tiny skew)
     const now = Math.floor(Date.now() / 1000);
     const exp = Number(p.exp ?? 0);
-    if (!exp || now > exp) return NextResponse.json({ error: "Token expired" }, { status: 400 });
+    if (!exp) return NextResponse.json({ error: "Missing exp" }, { status: 400 });
+    if (now > exp + 5) return NextResponse.json({ error: "Token expired" }, { status: 400 });
 
     // nonce + replay protection
     const n = String(p.nonce ?? "").trim();
     if (!n) return NextResponse.json({ error: "Missing nonce" }, { status: 400 });
 
+    const ttl = Math.max(10, exp - now); // seconds
     const replayKey = `handoff:payments:${n}`;
-    const ok = await kv.setnx(replayKey, "1");
-    if (!ok) return NextResponse.json({ error: "Token already used" }, { status: 400 });
 
-    // expire replay lock at token expiry
-    await kv.expire(replayKey, Math.max(10, exp - now));
+    // ✅ Vercel KV pattern: SET with NX + EX (best effort)
+    const setRes = await kv.set(replayKey, "1", { nx: true, ex: ttl } as any);
+
+    // Different redis clients return different success values; treat null/false as "already exists"
+    if (setRes === null || setRes === false) {
+      return NextResponse.json({ error: "Token already used" }, { status: 400 });
+    }
 
     const f = p.fields ?? {};
     const payeeInput = String(f.payeeInput ?? "").trim();
