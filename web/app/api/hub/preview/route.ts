@@ -13,6 +13,9 @@ export const runtime = "nodejs";
 
 type HubIntent = "pay" | "invoice" | "refund" | "help" | "unknown";
 
+type HubSurface = "payments.chat" | "invoice.chat" | "refund.chat";
+type HubKey = "payments" | "invoice" | "refund";
+
 type HubPreviewResponse = {
   ok: true;
   command: string;
@@ -20,10 +23,15 @@ type HubPreviewResponse = {
   confidence: number; // 0..1
   warnings: string[];
   route: {
-    key: "payments" | "invoice" | "refund";
-    surface: "payments.chat" | "invoice.chat" | "refund.chat";
+    // ✅ your requested shape
+    key: HubKey;
+    surface: HubSurface;
     path: "/new";
     reason: string;
+
+    // ✅ compatibility for older hub UI code that expects these
+    kind?: "surface";
+    target?: HubSurface;
   };
   fields: {
     network: "base";
@@ -36,8 +44,9 @@ type HubPreviewResponse = {
     amount?: string;
     memo?: string;
 
-    // invoice/refund later
-    // ...
+    // refund v0.1 (useful for UI later)
+    merchant?: string;
+    tx?: string;
   };
   evidence: {
     parsedBy: "routeintelligence:v0.1";
@@ -61,12 +70,20 @@ function normalizeCommand(raw: any) {
   return String(raw ?? "").trim();
 }
 
+function mkRoute(key: HubKey, surface: HubSurface, reason: string): HubPreviewResponse["route"] {
+  return {
+    key,
+    surface,
+    path: "/new",
+    reason,
+    // compatibility for hub UI that still expects these:
+    kind: "surface",
+    target: surface,
+  };
+}
+
 /**
  * PAY parser (strict on purpose)
- * supports:
- * - "send $50 usdc to device.eth"
- * - "pay 12.5 usdc to vitalik.eth for coffee"
- * - "send 50 to 0xabc... memo rent"
  */
 function parsePay(cmd: string): { amount: string; asset: "USDC"; payeeInput: string; memo?: string } | null {
   const re =
@@ -89,11 +106,6 @@ function parsePay(cmd: string): { amount: string; asset: "USDC"; payeeInput: str
 
 /**
  * INVOICE parser (v0.1 minimal)
- * supports:
- * - "invoice $50 usdc to device.eth for design"
- * - "create invoice 50 to vitalik.eth memo consulting"
- *
- * NOTE: You can evolve this later. For now it only routes + extracts.
  */
 function parseInvoice(cmd: string): { amount: string; asset: "USDC"; payeeInput?: string; memo?: string } | null {
   const re =
@@ -116,16 +128,12 @@ function parseInvoice(cmd: string): { amount: string; asset: "USDC"; payeeInput?
 
 /**
  * REFUND parser (v0.1 minimal)
- * supports:
- * - "refund spotify"
- * - "refund tx 0xabc..."
- * - "request refund for coinbase"
- *
- * This is only enough to route; you can tighten later.
  */
 function parseRefund(cmd: string): { merchant?: string; tx?: string; memo?: string } | null {
   // tx hash
-  const txm = cmd.match(/^(refund|request\s+refund)\s+(?:tx|transaction)\s+(0x[a-fA-F0-9]{64})(?:\s+(?:for|memo)\s+(.+))?$/i);
+  const txm = cmd.match(
+    /^(refund|request\s+refund)\s+(?:tx|transaction)\s+(0x[a-fA-F0-9]{64})(?:\s+(?:for|memo)\s+(.+))?$/i
+  );
   if (txm) {
     return { tx: txm[2], memo: txm[3]?.trim() || undefined };
   }
@@ -139,20 +147,23 @@ function parseRefund(cmd: string): { merchant?: string; tx?: string; memo?: stri
   return null;
 }
 
-async function resolveRecipient(req: Request, input: string): Promise<
+async function resolveRecipient(
+  req: Request,
+  input: string
+): Promise<
   | { ok: true; address: `0x${string}`; label?: string }
   | { ok: false; message: string }
 > {
   const url = new URL(`/api/resolve?input=${encodeURIComponent(input)}`, req.url);
   const rr = await fetch(url, { method: "GET", cache: "no-store" });
   const json = await rr.json().catch(() => null);
+
   if (!json) return { ok: false, message: "Resolver error." };
   if (json.ok) return { ok: true, address: json.address as `0x${string}`, label: json.label as string | undefined };
   return { ok: false, message: json.message || "Could not resolve." };
 }
 
 export async function POST(req: Request) {
-  // Rate limit: treat as "preview" (recommended) or reuse "create"
   const rl = await rateLimit({
     surface: "hub",
     action: "preview",
@@ -176,7 +187,7 @@ export async function POST(req: Request) {
     const warnings: string[] = [];
     let confidence = 0.7;
 
-    // 1) Try PAY
+    // 1) PAY
     const pay = parsePay(command);
     if (pay) {
       confidence = 0.92;
@@ -187,21 +198,19 @@ export async function POST(req: Request) {
       }
 
       const r = await resolveRecipient(req, pay.payeeInput);
+      const route = mkRoute("payments", "payments.chat", "Recognized pay/send + amount + recipient → payments");
+
       if (!r.ok) {
         confidence = 0.25;
         warnings.push(r.message || "Could not resolve recipient.");
+
         const resp: HubPreviewResponse = {
           ok: true,
           command,
           intent: "pay",
           confidence: clamp01(confidence),
           warnings,
-          route: {
-            key: "payments",
-            surface: "payments.chat",
-            path: "/new",
-            reason: "Recognized pay/send + amount + recipient → payments",
-          },
+          route,
           fields: {
             network: "base",
             asset: "USDC",
@@ -217,6 +226,7 @@ export async function POST(req: Request) {
             extracted: { parser: "pay", ...pay },
           },
         };
+
         return NextResponse.json(resp, { status: 200 });
       }
 
@@ -226,12 +236,7 @@ export async function POST(req: Request) {
         intent: "pay",
         confidence: clamp01(confidence),
         warnings,
-        route: {
-          key: "payments",
-          surface: "payments.chat",
-          path: "/new",
-          reason: "Recognized pay/send + amount + recipient → payments",
-        },
+        route,
         fields: {
           network: "base",
           asset: "USDC",
@@ -252,16 +257,16 @@ export async function POST(req: Request) {
       return NextResponse.json(resp, { status: 200 });
     }
 
-    // 2) Try INVOICE
+    // 2) INVOICE
     const inv = parseInvoice(command);
     if (inv) {
       confidence = 0.85;
+
       if (!isPositiveAmount(inv.amount)) {
         confidence = 0.25;
         warnings.push("Invalid amount.");
       }
 
-      // If invoice includes "to X", we can resolve as a nice UX hint
       let payeeAddress: `0x${string}` | null = null;
       let label: string | undefined = undefined;
 
@@ -282,18 +287,12 @@ export async function POST(req: Request) {
         intent: "invoice",
         confidence: clamp01(confidence),
         warnings,
-        route: {
-          key: "invoice",
-          surface: "invoice.chat",
-          path: "/new",
-          reason: "Recognized invoice intent → invoice",
-        },
+        route: mkRoute("invoice", "invoice.chat", "Recognized invoice intent → invoice"),
         fields: {
           network: "base",
           asset: "USDC",
           amount: inv.amount,
           memo: inv.memo,
-          // reusing payments-like naming for now; invoice surface can map it how it wants
           payeeInput: inv.payeeInput,
           payeeAddress,
           label,
@@ -309,7 +308,7 @@ export async function POST(req: Request) {
       return NextResponse.json(resp, { status: 200 });
     }
 
-    // 3) Try REFUND
+    // 3) REFUND
     const ref = parseRefund(command);
     if (ref) {
       confidence = 0.8;
@@ -320,17 +319,12 @@ export async function POST(req: Request) {
         intent: "refund",
         confidence: clamp01(confidence),
         warnings,
-        route: {
-          key: "refund",
-          surface: "refund.chat",
-          path: "/new",
-          reason: "Recognized refund intent → refund",
-        },
+        route: mkRoute("refund", "refund.chat", "Recognized refund intent → refund"),
         fields: {
           network: "base",
-          // Keep generic; refund surface will decide what to do
           memo: ref.memo,
-          // store extracted info as evidence; you can also promote to fields later
+          merchant: ref.merchant,
+          tx: ref.tx,
         },
         evidence: {
           parsedBy: "routeintelligence:v0.1",
@@ -343,7 +337,7 @@ export async function POST(req: Request) {
       return NextResponse.json(resp, { status: 200 });
     }
 
-    // 4) Help / unknown
+    // 4) Unknown
     confidence = 0.35;
     warnings.push('Could not route. Try: "send $50 usdc to device.eth"');
 
@@ -353,12 +347,7 @@ export async function POST(req: Request) {
       intent: "unknown",
       confidence: clamp01(confidence),
       warnings,
-      route: {
-        key: "payments",
-        surface: "payments.chat",
-        path: "/new",
-        reason: "Default route (unknown intent) → payments",
-      },
+      route: mkRoute("payments", "payments.chat", "Default route (unknown intent) → payments"),
       fields: {
         network: "base",
       },
