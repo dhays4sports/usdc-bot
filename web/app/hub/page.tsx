@@ -24,6 +24,7 @@ export default function HubHome() {
   const [err, setErr] = useState<string | null>(null);
 
   const canCommit = useMemo(() => {
+    const aud = (preview?.route as any)?.surface ?? preview?.route?.target;
     return !!preview?.ok && !!preview?.route?.target && !!preview?.route?.path;
   }, [preview]);
 
