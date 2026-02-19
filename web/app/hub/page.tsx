@@ -67,7 +67,7 @@ export default function HubHome() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          aud: preview.route.target,
+          aud: (preview.route as any).surface ?? preview.route.target,
           intent: preview.intent,
           fields: preview.fields,
           path: preview.route.path, // e.g. /payments/new
