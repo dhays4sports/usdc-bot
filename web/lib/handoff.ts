@@ -106,11 +106,16 @@ export async function consumeHandoffToken(opts: {
   // Vercel KV supports options object for set in newer clients.
   // If your kv client doesn't support { nx, ex }, fallback below.
   try {
-    const ok = await kv.set(nonceKey, "1", { nx: true, ex: ttl } as any);
-    // Some clients return "OK", some return null/boolean; handle both:
-    if (ok === null || ok === false) {
-      return { ok: false as const, error: "Token already used" };
-    }
+    const res: unknown = await kv.set(nonceKey, "1", { nx: true, ex: ttl } as any);
+
+// Vercel KV: when NX fails, this returns null (not "OK").
+// (Some Redis clients return boolean/number; we safely allow those too.)
+const didSet =
+  res === "OK" || res === "ok" || res === true || res === 1;
+
+if (!didSet) {
+  return { ok: false as const, error: "Token already used" };
+}
   } catch {
     // Fallback approach: simple get + set (weaker race protection)
     const existing = await kv.get(nonceKey);
