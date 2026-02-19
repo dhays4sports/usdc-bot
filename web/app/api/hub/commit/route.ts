@@ -1,13 +1,11 @@
 // web/app/api/hub/commit/route.ts
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { rateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
 const SECRET = process.env.HUB_HANDOFF_SECRET?.trim() || "";
-
-// ✅ Only allow routing to known surfaces
-const ALLOWED_AUD = new Set(["payments.chat", "invoice.chat", "refund.chat"] as const);
 
 function b64url(buf: Buffer) {
   return buf
@@ -31,45 +29,59 @@ function nonce() {
 type CommitBody = {
   intent?: string;
 
-  // ✅ support BOTH styles:
-  // new UI: { aud, path }
+  // old shape (recommended)
+  route?: { aud?: string; path?: string };
+
+  // compatibility shape (what your hub UI was sending earlier)
   aud?: string;
   path?: string;
-
-  // older spec: { route: { aud, path } }
-  // newer preview naming: { route: { surface, path } }
-  route?: { aud?: string; surface?: string; path?: string };
 
   fields?: Record<string, any>;
   context?: any;
 };
 
-function isSafePath(p: string) {
-  // Must be a relative path like "/new" (not "https://...", not "//evil.com")
-  return p.startsWith("/") && !p.startsWith("//") && !p.includes("://");
+function normalizeAud(raw: string) {
+  const a = raw.trim().toLowerCase();
+  if (!a) return "";
+  // allow passing "payments" shorthand if you ever do
+  if (a === "payments") return "payments.chat";
+  if (a === "invoice") return "invoice.chat";
+  if (a === "refund") return "refund.chat";
+  return a;
 }
 
 export async function POST(req: Request) {
+  const rl = await rateLimit({
+    surface: "hub",
+    action: "commit",
+    req,
+    limit: 40,
+    windowSec: 60,
+  });
+
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Try again soon." },
+      { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+    );
+  }
+
   try {
     const body = (await req.json().catch(() => ({}))) as CommitBody;
 
     const intent = String(body.intent ?? "").trim();
 
-    // ✅ Accept aud from: body.aud OR body.route.aud OR body.route.surface
-    const aud = String(body.aud ?? body.route?.aud ?? body.route?.surface ?? "").trim().toLowerCase();
+    // ✅ accept both shapes
+    const audRaw = String(body.route?.aud ?? body.aud ?? "").trim();
+    const pathRaw = String(body.route?.path ?? body.path ?? "").trim();
 
-    // ✅ Accept path from: body.path OR body.route.path
-    const path = String(body.path ?? body.route?.path ?? "").trim();
+    const aud = normalizeAud(audRaw);
+    const path = pathRaw || "/new";
 
     if (!intent) return NextResponse.json({ error: "Missing intent" }, { status: 400 });
     if (!aud) return NextResponse.json({ error: "Missing route.aud" }, { status: 400 });
-
-    if (!ALLOWED_AUD.has(aud as any)) {
-      return NextResponse.json({ error: "Invalid route.aud" }, { status: 400 });
-    }
-
-    if (!path || !isSafePath(path)) {
-      return NextResponse.json({ error: "route.path must be a safe relative path starting with /" }, { status: 400 });
+    if (!path.startsWith("/")) {
+      return NextResponse.json({ error: "route.path must start with /" }, { status: 400 });
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -89,7 +101,7 @@ export async function POST(req: Request) {
 
     const token = sign(payload);
 
-    // ✅ IMPORTANT: Redirect to the target SURFACE, not a relative path on hub.chat
+    // ✅ IMPORTANT: absolute redirect to the target surface host
     const redirect = `https://${aud}${path}?h=${encodeURIComponent(token)}`;
 
     return NextResponse.json({ ok: true, redirect, ttlSec }, { status: 200 });
