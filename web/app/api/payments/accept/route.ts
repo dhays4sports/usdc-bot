@@ -36,10 +36,7 @@ function verify(token: string): { ok: true; payload: any } | { ok: false; error:
 
   const [bodyB64, sigB64] = parts;
 
-  const expectedSig = b64urlFromBuf(
-    crypto.createHmac("sha256", SECRET).update(bodyB64).digest()
-  );
-
+  const expectedSig = b64urlFromBuf(crypto.createHmac("sha256", SECRET).update(bodyB64).digest());
   if (!timingSafeEq(sigB64, expectedSig)) return { ok: false, error: "Bad signature" };
 
   let payload: any;
@@ -56,6 +53,22 @@ function is0x40(v: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(v);
 }
 
+// Normalize setnx-like return values across clients:
+// - number: 1 success, 0 fail
+// - string: "1"/"0"/"OK"
+// - boolean: true/false
+// - null/undefined: fail
+function isSetSuccess(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "number") return v === 1;
+  if (typeof v === "boolean") return v === true;
+  if (typeof v === "string") {
+    const s = v.trim().toUpperCase();
+    return s === "1" || s === "OK" || s === "TRUE";
+  }
+  return false;
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
@@ -65,39 +78,40 @@ export async function POST(req: Request) {
     const v = verify(token);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
 
-    const p = v.payload ?? {};
+    const p = v.payload;
 
-    // issuer + audience checks
+    // issuer
     if (String(p.iss ?? "") !== "hub.chat") {
       return NextResponse.json({ error: "Wrong issuer" }, { status: 400 });
     }
 
-    // ✅ Keep aud strict (commit emits "payments.chat")
-    const aud = String(p.aud ?? "").toLowerCase();
-    if (aud !== "payments.chat") {
+    // audience (payments only)
+    const aud = String(p.aud ?? "");
+    if (aud !== "payments.chat" && aud !== "www.payments.chat") {
       return NextResponse.json({ error: "Wrong audience" }, { status: 400 });
     }
 
-    // TTL (allow tiny skew)
+    // TTL
     const now = Math.floor(Date.now() / 1000);
     const exp = Number(p.exp ?? 0);
-    if (!exp) return NextResponse.json({ error: "Missing exp" }, { status: 400 });
-    if (now > exp + 5) return NextResponse.json({ error: "Token expired" }, { status: 400 });
+    if (!exp || now > exp) return NextResponse.json({ error: "Token expired" }, { status: 400 });
 
-    // nonce + replay protection
+    // nonce
     const n = String(p.nonce ?? "").trim();
     if (!n) return NextResponse.json({ error: "Missing nonce" }, { status: 400 });
 
-    const ttl = Math.max(10, exp - now); // seconds
+    // replay protection
     const replayKey = `handoff:payments:${n}`;
 
-    // ✅ Vercel KV pattern: SET with NX + EX (best effort)
-    const setRes = await kv.set(replayKey, "1", { nx: true, ex: ttl } as any);
+    // Prefer setnx if present; fall back to kv.set({ nx:true }) if you ever need to
+    const setRes = await (kv as any).setnx(replayKey, "1");
 
-    // Different redis clients return different success values; treat null/false as "already exists"
-    if (setRes === null || setRes === false) {
+    if (!isSetSuccess(setRes)) {
       return NextResponse.json({ error: "Token already used" }, { status: 400 });
     }
+
+    // expire replay lock at token expiry
+    await kv.expire(replayKey, Math.max(10, exp - now));
 
     const f = p.fields ?? {};
     const payeeInput = String(f.payeeInput ?? "").trim();
@@ -106,7 +120,6 @@ export async function POST(req: Request) {
     const memo = String(f.memo ?? "").trim();
     const label = f.label ? String(f.label) : undefined;
 
-    // sanitize required payment fields
     if (!payeeInput) return NextResponse.json({ error: "Missing payeeInput" }, { status: 400 });
     if (!is0x40(payeeAddressRaw)) {
       return NextResponse.json({ error: "Invalid payeeAddress" }, { status: 400 });
