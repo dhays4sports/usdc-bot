@@ -5,11 +5,13 @@ type RateLimitResult =
   | { ok: true; remaining?: number }
   | { ok: false; retryAfterSec: number };
 
-// ✅ Add "sms"
+// ✅ Single source of truth
+// Add the surfaces you’re actively using.
 const SURFACES = ["remit", "authorize", "payments", "invoice", "refund", "hub", "sms"] as const;
 export type Surface = (typeof SURFACES)[number];
 
-// ✅ Add "inbound"
+// ✅ Actions: include preview/commit/accept for hub handoffs.
+// Add inbound for SMS webhooks.
 const ACTIONS = [
   "create",
   "preview",
@@ -23,6 +25,7 @@ const ACTIONS = [
 export type Action = (typeof ACTIONS)[number];
 
 function firstIpFromXForwardedFor(v: string) {
+  // "1.2.3.4, 5.6.7.8" -> "1.2.3.4"
   return v.split(",")[0]?.trim();
 }
 
@@ -42,32 +45,34 @@ export function getClientIp(req: Request): string {
 }
 
 /**
- * Fixed-window limiter using Redis INCR + EXPIRE.
- * - Namespaced by surface + action
- * - Can optionally use a custom key (e.g., phone number) instead of IP
+ * Simple fixed-window limiter using Redis INCR + EXPIRE.
+ * - If the key doesn't exist, count becomes 1 and we set TTL.
+ * - If count > limit, block.
+ *
+ * ✅ Supports an optional `key` override (ex: phone number) so SMS is not IP-based.
  */
 export async function rateLimit(opts: {
   surface: Surface;
   action: Action;
   req: Request;
-  limit: number;
-  windowSec: number;
-  key?: string; // ✅ OPTIONAL override (phone, user id, etc)
+  key?: string; // OPTIONAL override (ex: "+1669...")
+  limit: number; // max requests per window
+  windowSec: number; // window size
 }): Promise<RateLimitResult> {
-  const ip = getClientIp(opts.req);
-  const ident = String(opts.key ?? ip ?? "unknown");
+  const identity = (opts.key && String(opts.key).trim()) || getClientIp(opts.req);
 
   // ✅ Namespace by surface + action so hubs/surfaces do NOT collide.
-  const key = `rl:${opts.surface}:${opts.action}:${ident}`;
+  const k = `rl:${opts.surface}:${opts.action}:${identity}`;
 
-  const count = await kv.incr(key);
+  const count = await kv.incr(k);
 
+  // ✅ Ensure TTL exists (only on first hit).
   if (count === 1) {
-    await kv.expire(key, opts.windowSec);
+    await kv.expire(k, opts.windowSec);
   }
 
   if (count > opts.limit) {
-    const ttl = await kv.ttl(key).catch(() => -1);
+    const ttl = await kv.ttl(k).catch(() => -1);
     return { ok: false, retryAfterSec: ttl > 0 ? ttl : opts.windowSec };
   }
 
