@@ -111,7 +111,7 @@ export default function NewPaymentIntentClient() {
   const consumedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const token = searchParams.get("h");
+    const token = searchParams.get("h") || searchParams.get("handoff") || searchParams.get("token");
     if (!token) return;
     if (consumedTokenRef.current === token) return;
 
