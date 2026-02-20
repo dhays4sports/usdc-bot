@@ -42,6 +42,11 @@ export async function POST(req: Request) {
       return twiml(`❌ I couldn’t route that.\nTry:\nsend $5 usdc to device.eth`);
     }
 
+    const aud = preview?.route?.surface ?? preview?.route?.target;
+if (!aud) {
+  return twiml(`❌ Missing route. Try:\nsend $5 usdc to device.eth`);
+}
+
     // 2) Commit -> get signed handoff redirect
     const aud = preview?.route?.surface ?? preview?.route?.target; // handle both shapes
     const path = preview?.route?.path || "/new";
