@@ -85,63 +85,63 @@ export async function POST(req: Request) {
     if (now > exp + 5) return NextResponse.json({ error: "Token expired" }, { status: 400 });
 
     // nonce + replay protection
-    const n = String(p.nonce ?? "").trim();
-    if (!n) return NextResponse.json({ error: "Missing nonce" }, { status: 400 });
+const n = String(p.nonce ?? "").trim();
+if (!n) return NextResponse.json({ error: "Missing nonce" }, { status: 400 });
 
-    const ttl = Math.max(10, exp - now); // seconds
-    const replayKey = `handoff:payments:${n}`;
+const ttl = Math.max(10, exp - now); // seconds
+const replayKey = `handoff:payments:${n}`;
 
-    // ✅ Vercel KV pattern: SET with NX + EX (best effort)
-    const setRes = await kv.set(replayKey, "1", { nx: true, ex: ttl } as any);
+// ✅ Vercel KV pattern: SET with NX + EX (best effort)
+const setRes = (await kv.set(replayKey, "1", { nx: true, ex: ttl } as any)) as unknown;
 
-    // Different redis clients return different success values; treat null/false as "already exists"
-    if (setRes === null || setRes === false) {
-      return NextResponse.json({ error: "Token already used" }, { status: 400 });
-    }
+// Normalize possible return shapes across redis clients / typings
+const wrote =
+  setRes === "OK" ||
+  setRes === "ok" ||
+  setRes === true ||
+  setRes === 1;
 
-    const f = p.fields ?? {};
-    const payeeInput = String(f.payeeInput ?? "").trim();
-    const payeeAddressRaw = String(f.payeeAddress ?? "").trim();
-    const amount = String(f.amount ?? "").trim();
-    const memo = String(f.memo ?? "").trim();
-    const label = f.label ? String(f.label) : undefined;
-
-    // sanitize required payment fields
-    if (!payeeInput) return NextResponse.json({ error: "Missing payeeInput" }, { status: 400 });
-    if (!is0x40(payeeAddressRaw)) {
-      return NextResponse.json({ error: "Invalid payeeAddress" }, { status: 400 });
-    }
-
-    const nAmount = Number(amount);
-    if (!amount || Number.isNaN(nAmount) || nAmount <= 0) {
-      return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
-    }
-
-    if (memo && memo.length > 180) {
-      return NextResponse.json({ error: "Memo too long" }, { status: 400 });
-    }
-
-    return NextResponse.json(
-      {
-        ok: true,
-        intent: String(p.intent ?? "pay"),
-        fields: {
-          payeeInput,
-          payeeAddress: payeeAddressRaw as `0x${string}`,
-          amount,
-          memo: memo || undefined,
-          asset: "USDC",
-          network: "base",
-          label,
-        },
-        context: p.context ?? undefined,
-      },
-      { status: 200 }
-    );
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: "Server error", detail: String(err?.message ?? err) },
-      { status: 500 }
-    );
-  }
+// If we did not acquire the nonce lock, the token was already used
+if (!wrote) {
+  return NextResponse.json({ error: "Token already used" }, { status: 400 });
 }
+
+const f = p.fields ?? {};
+const payeeInput = String(f.payeeInput ?? "").trim();
+const payeeAddressRaw = String(f.payeeAddress ?? "").trim();
+const amount = String(f.amount ?? "").trim();
+const memo = String(f.memo ?? "").trim();
+const label = f.label ? String(f.label) : undefined;
+
+// sanitize required payment fields
+if (!payeeInput) return NextResponse.json({ error: "Missing payeeInput" }, { status: 400 });
+if (!is0x40(payeeAddressRaw)) {
+  return NextResponse.json({ error: "Invalid payeeAddress" }, { status: 400 });
+}
+
+const nAmount = Number(amount);
+if (!amount || Number.isNaN(nAmount) || nAmount <= 0) {
+  return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+}
+
+if (memo && memo.length > 180) {
+  return NextResponse.json({ error: "Memo too long" }, { status: 400 });
+}
+
+return NextResponse.json(
+  {
+    ok: true,
+    intent: String(p.intent ?? "pay"),
+    fields: {
+      payeeInput,
+      payeeAddress: payeeAddressRaw as `0x${string}`,
+      amount,
+      memo: memo || undefined,
+      asset: "USDC",
+      network: "base",
+      label,
+    },
+    context: p.context ?? undefined,
+  },
+  { status: 200 }
+);
