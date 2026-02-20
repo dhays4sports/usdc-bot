@@ -7,15 +7,19 @@ import Link from "next/link";
 
 type HubPreview = {
   ok: true;
-  intent: "pay" | "invoice" | "refund";
-  route: { kind: "surface"; target: "payments.chat" | "invoice.chat" | "refund.chat"; path: string };
-  fields: Record<string, any>;
+  intent: "pay" | "invoice" | "refund" | "help" | "unknown";
   confidence: number;
   warnings: string[];
+  route: {
+    // supports both shapes (older UI + newer api)
+    target?: "payments.chat" | "invoice.chat" | "refund.chat";
+    surface?: "payments.chat" | "invoice.chat" | "refund.chat";
+    path?: string; // usually "/new"
+  };
+  fields: Record<string, any>;
 };
 
 export default function HubHome() {
-  // SmartCommand input
   const [command, setCommand] = useState("send $50 usdc to device.eth");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -23,10 +27,19 @@ export default function HubHome() {
   const [preview, setPreview] = useState<HubPreview | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const canCommit = useMemo(() => {
-    const aud = (preview?.route as any)?.surface ?? preview?.route?.target;
-    return !!preview?.ok && !!preview?.route?.target && !!preview?.route?.path;
+  const aud = useMemo(() => {
+    if (!preview?.ok) return "";
+    return String((preview as any)?.route?.surface ?? preview?.route?.target ?? "").trim();
   }, [preview]);
+
+  const path = useMemo(() => {
+    if (!preview?.ok) return "";
+    return String(preview?.route?.path ?? "/new").trim();
+  }, [preview]);
+
+  const canCommit = useMemo(() => {
+    return !!preview?.ok && !!aud && !!path && path.startsWith("/");
+  }, [preview, aud, path]);
 
   async function onPreview() {
     setErr(null);
@@ -49,7 +62,6 @@ export default function HubHome() {
       const json = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) throw new Error(json?.error || "Preview failed");
 
-      // Expect { ok:true, intent, route, fields, confidence, warnings }
       setPreview(json as HubPreview);
     } catch (e: any) {
       setErr(e?.message || "Preview failed");
@@ -68,13 +80,13 @@ export default function HubHome() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-  intent: preview.intent,
-  route: {
-    aud: (preview as any).route?.surface ?? (preview as any).route?.target
-    path: preview.route?.path,  // "/new"
-  },
-  fields: preview.fields,
-}),
+          intent: preview.intent,
+          route: {
+            aud,   // ✅ always provide route.aud
+            path,  // ✅ always provide route.path
+          },
+          fields: preview.fields,
+        }),
       });
 
       const json = (await res.json().catch(() => ({}))) as any;
@@ -89,7 +101,6 @@ export default function HubHome() {
     }
   }
 
-  // Pretty helpers (safe)
   const prettyTarget = (t?: string) => {
     if (!t) return "—";
     if (t === "payments.chat") return "payments.chat";
@@ -104,6 +115,8 @@ export default function HubHome() {
     return addr.slice(0, 6) + "…" + addr.slice(-4);
   };
 
+  const routeLabel = prettyTarget(aud);
+
   return (
     <>
       <Header />
@@ -113,7 +126,6 @@ export default function HubHome() {
             <div className="cardTitle">HUB</div>
 
             <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-              {/* SmartCommand */}
               <div
                 style={{
                   padding: 12,
@@ -142,13 +154,11 @@ export default function HubHome() {
                   <div style={{ fontSize: 12, opacity: 0.6, alignSelf: "center" }}>
                     Examples:{" "}
                     <span style={{ opacity: 0.9 }}>
-                      send $50 usdc to device.eth · invoice 120 usdc to vitalik.eth for design · refund $15 to 0x… for
-                      double charge
+                      send $50 usdc to device.eth · invoice 120 usdc to vitalik.eth for design · refund spotify
                     </span>
                   </div>
                 </div>
 
-                {/* Preview Card */}
                 {preview ? (
                   <div style={{ marginTop: 12, fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
                     <div style={{ opacity: 0.7, marginBottom: 6 }}>Preview</div>
@@ -159,9 +169,8 @@ export default function HubHome() {
                       </div>
 
                       <div>
-                        <span style={{ opacity: 0.75 }}>Route:</span>{" "}
-                        {prettyTarget(preview.route?.target)}
-                        <span style={{ opacity: 0.65 }}> {preview.route?.path ? `(${preview.route.path})` : ""}</span>
+                        <span style={{ opacity: 0.75 }}>Route:</span> {routeLabel}
+                        <span style={{ opacity: 0.65 }}> {path ? `(${path})` : ""}</span>
                       </div>
 
                       <div>
@@ -176,8 +185,7 @@ export default function HubHome() {
 
                       <div>
                         <span style={{ opacity: 0.75 }}>Amount:</span>{" "}
-                        {String(preview.fields?.amount ?? "—")}{" "}
-                        {String(preview.fields?.asset ?? "USDC")}
+                        {String(preview.fields?.amount ?? "—")} {String(preview.fields?.asset ?? "USDC")}
                       </div>
 
                       {preview.fields?.memo ? (
@@ -210,9 +218,7 @@ export default function HubHome() {
                 ) : null}
 
                 {err ? (
-                  <div style={{ fontSize: 12, opacity: 0.9, marginTop: 10 }}>
-                    Error: {err}
-                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, marginTop: 10 }}>Error: {err}</div>
                 ) : null}
               </div>
 
