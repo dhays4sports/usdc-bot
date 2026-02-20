@@ -5,13 +5,11 @@ type RateLimitResult =
   | { ok: true; remaining?: number }
   | { ok: false; retryAfterSec: number };
 
-// ✅ Single source of truth
-// Add the surfaces you’re actively using + hub/refund for routing.
-const SURFACES = ["remit", "authorize", "payments", "invoice", "refund", "hub"] as const;
+// ✅ Add "sms"
+const SURFACES = ["remit", "authorize", "payments", "invoice", "refund", "hub", "sms"] as const;
 export type Surface = (typeof SURFACES)[number];
 
-// ✅ Actions: include preview/commit/accept for hub handoffs.
-// Keep the existing ones so you don’t break current routes.
+// ✅ Add "inbound"
 const ACTIONS = [
   "create",
   "preview",
@@ -20,11 +18,11 @@ const ACTIONS = [
   "link_proof",
   "replace_proof",
   "revoke",
+  "inbound",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
 function firstIpFromXForwardedFor(v: string) {
-  // "1.2.3.4, 5.6.7.8" -> "1.2.3.4"
   return v.split(",")[0]?.trim();
 }
 
@@ -37,7 +35,6 @@ export function getClientIp(req: Request): string {
   const xri = h.get("x-real-ip");
   if (xri) return xri.trim() || "unknown";
 
-  // Vercel sometimes exposes this
   const xvercel = h.get("x-vercel-forwarded-for");
   if (xvercel) return firstIpFromXForwardedFor(xvercel) || "unknown";
 
@@ -45,31 +42,31 @@ export function getClientIp(req: Request): string {
 }
 
 /**
- * Simple fixed-window limiter using Redis INCR + EXPIRE.
- * - If the key doesn't exist, count becomes 1 and we set TTL.
- * - If count > limit, block.
+ * Fixed-window limiter using Redis INCR + EXPIRE.
+ * - Namespaced by surface + action
+ * - Can optionally use a custom key (e.g., phone number) instead of IP
  */
 export async function rateLimit(opts: {
   surface: Surface;
   action: Action;
   req: Request;
-  limit: number; // max requests per window
-  windowSec: number; // window size
+  limit: number;
+  windowSec: number;
+  key?: string; // ✅ OPTIONAL override (phone, user id, etc)
 }): Promise<RateLimitResult> {
   const ip = getClientIp(opts.req);
+  const ident = String(opts.key ?? ip ?? "unknown");
 
   // ✅ Namespace by surface + action so hubs/surfaces do NOT collide.
-  const key = `rl:${opts.surface}:${opts.action}:${ip}`;
+  const key = `rl:${opts.surface}:${opts.action}:${ident}`;
 
   const count = await kv.incr(key);
 
-  // ✅ Ensure TTL exists (only on first hit).
   if (count === 1) {
     await kv.expire(key, opts.windowSec);
   }
 
   if (count > opts.limit) {
-    // Best-effort TTL lookup for Retry-After
     const ttl = await kv.ttl(key).catch(() => -1);
     return { ok: false, retryAfterSec: ttl > 0 ? ttl : opts.windowSec };
   }
