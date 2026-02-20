@@ -32,7 +32,11 @@ type AcceptResponse = {
     network: "base";
     label?: string;
   };
-  context?: any;
+  context?: {
+    source?: string; // ✅ used for the "Routed from hub.chat" badge
+    routedFrom?: string;
+    [k: string]: any;
+  };
 };
 
 function short(addr?: string | null) {
@@ -43,6 +47,9 @@ function short(addr?: string | null) {
 export default function NewPaymentIntentClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // ✅ visual confirmation (badge)
+  const [handoffSource, setHandoffSource] = useState<string | null>(null);
 
   // ✅ Command → Preview
   const [command, setCommand] = useState("send $50 usdc to device.eth");
@@ -110,8 +117,12 @@ export default function NewPaymentIntentClient() {
   // Use a ref so we don't re-consume on rerenders.
   const consumedTokenRef = useRef<string | null>(null);
 
+  // IMPORTANT: don't put searchParams.get(...) directly in deps; store the value.
+  const handoffToken =
+    searchParams.get("h") || searchParams.get("handoff") || searchParams.get("token");
+
   useEffect(() => {
-    const token = searchParams.get("h") || searchParams.get("handoff") || searchParams.get("token");
+    const token = handoffToken;
     if (!token) return;
     if (consumedTokenRef.current === token) return;
 
@@ -136,6 +147,12 @@ export default function NewPaymentIntentClient() {
         const data = json as AcceptResponse;
         if (cancelled) return;
 
+        // ✅ set badge source from context.source (preferred), fallback to hub.chat if missing
+        const src =
+          String(data?.context?.source ?? data?.context?.routedFrom ?? "hub.chat").trim() ||
+          "hub.chat";
+        setHandoffSource(src);
+
         applyFields({
           payeeInput: data.fields.payeeInput,
           payeeAddress: data.fields.payeeAddress,
@@ -157,9 +174,7 @@ export default function NewPaymentIntentClient() {
     return () => {
       cancelled = true;
     };
-    // Depend on the string value only, not the searchParams object
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, searchParams.get("h")]);
+  }, [router, handoffToken]);
 
   // If user edits fields after apply, invalidate
   useEffect(() => {
@@ -209,6 +224,9 @@ export default function NewPaymentIntentClient() {
         setCommandErr("Preview failed: could not resolve recipient. Fix the command and try again.");
         return;
       }
+
+      // If user is now using local preview, clear hub badge (optional)
+      setHandoffSource(null);
 
       applyFields({
         payeeInput: p.payeeInput,
@@ -271,7 +289,11 @@ export default function NewPaymentIntentClient() {
           asset: "USDC",
           network: "base",
           context: {
-            source: "payments.chat",
+            // ✅ if we were routed from hub, preserve that as the "source"
+            source: handoffSource ? "hub.chat" : "payments.chat",
+            routedFrom: handoffSource ? handoffSource : undefined,
+
+            // audit trail for NL preview (payments-side)
             fromCommand: previewApplied ? command.trim() : undefined,
             previewConfidence: previewApplied ? preview?.confidence : undefined,
             previewWarnings: previewApplied ? preview?.warnings : undefined,
@@ -299,6 +321,30 @@ export default function NewPaymentIntentClient() {
         <div className="centerStage">
           <div className="glassCard">
             <div className="cardTitle">NEW PAYMENT INTENT</div>
+
+            {/* ✅ Visual confirmation badge */}
+            {handoffSource ? (
+              <div style={{ marginTop: 6 }}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 12,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    opacity: 0.9,
+                  }}
+                >
+                  <span style={{ opacity: 0.75 }}>Routed from</span>
+                  <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                    {handoffSource}
+                  </span>
+                </span>
+              </div>
+            ) : null}
 
             <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
               {/* Command → Preview */}
@@ -344,9 +390,7 @@ export default function NewPaymentIntentClient() {
                     <div>
                       <span style={{ opacity: 0.75 }}>To:</span>{" "}
                       <span style={{ opacity: 0.9 }}>
-                        {(preview.label ?? preview.payeeInput)
-                          ? `${preview.label ?? preview.payeeInput} → `
-                          : ""}
+                        {(preview.label ?? preview.payeeInput) ? `${preview.label ?? preview.payeeInput} → ` : ""}
                       </span>
                       <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
                         {preview.payeeAddress ? short(preview.payeeAddress) : "—"}
@@ -410,11 +454,7 @@ export default function NewPaymentIntentClient() {
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Memo (optional)</div>
-                <input
-                  value={memo}
-                  onChange={(e) => setMemo(e.target.value)}
-                  placeholder="Max 180 chars"
-                />
+                <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="Max 180 chars" />
               </label>
 
               {err ? <div style={{ fontSize: 12, opacity: 0.9 }}>Error: {err}</div> : null}
