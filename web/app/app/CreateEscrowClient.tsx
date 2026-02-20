@@ -29,22 +29,17 @@ function short(addr?: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-type HandoffAcceptResponse =
-  | {
-      ok: true;
-      intent: string;
-      fields: {
-        beneficiaryInput: string;
-        beneficiaryAddress?: `0x${string}` | null;
-        amount: string;
-        memo?: string;
-        returnUrl?: string;
-        // optional passthrough
-        deadline?: string;
-      };
-      context?: any;
-    }
-  | { ok: false; error: string; detail?: string };
+type UsdcAcceptResponse = {
+  ok: true;
+  intent: string;
+  fields: {
+    beneficiaryInput: string;
+    amount: string;
+    memo?: string;
+    returnUrl?: string;
+  };
+  context?: any;
+};
 
 export default function CreateEscrowPage() {
   const router = useRouter();
@@ -72,9 +67,71 @@ export default function CreateEscrowPage() {
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [lastTx, setLastTx] = useState<`0x${string}` | null>(null);
 
-  // Track whether beneficiary was prefilled by query param or handoff
+  // Routed-from badge (handoff context)
+  const [routedFrom, setRoutedFrom] = useState<string | null>(null);
+
+  // Track whether beneficiary was prefilled by query param
   const [beneficiaryPrefilled, setBeneficiaryPrefilled] = useState(false);
   const [prefillResolved, setPrefillResolved] = useState(false);
+
+  // ✅ Hub/Payments handoff: accept token ?h=...
+  const consumedTokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const token = sp.get("h") || sp.get("handoff") || sp.get("token");
+    if (!token) return;
+    if (consumedTokenRef.current === token) return;
+
+    consumedTokenRef.current = token;
+
+    let cancelled = false;
+
+    (async () => {
+      setNotice(null);
+
+      try {
+        const res = await fetch("/api/usdc/accept", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+
+        const json = (await res.json().catch(() => ({}))) as any;
+        if (!res.ok || !json?.ok) throw new Error(json?.error || "Handoff failed");
+
+        const data = json as UsdcAcceptResponse;
+        if (cancelled) return;
+
+        // Apply fields
+        setBeneficiaryInput(String(data.fields.beneficiaryInput ?? ""));
+        setBeneficiaryPrefilled(true);
+        setPrefillResolved(false);
+
+        if (data.fields.amount) setAmount(String(data.fields.amount));
+        if (typeof data.fields.memo === "string") setMemo(String(data.fields.memo));
+        if (typeof data.fields.returnUrl === "string") setReturnUrl(String(data.fields.returnUrl));
+
+        // Badge
+        const src =
+          (data.context?.source as string | undefined) ||
+          (data.context?.upstream?.source as string | undefined) ||
+          "payments.chat";
+        setRoutedFrom(src);
+
+        // Strip token from URL (prevents refresh from re-consuming)
+        router.replace("/app");
+      } catch (e: any) {
+        if (cancelled) return;
+        setNotice({ type: "err", msg: e?.message || "Failed to accept handoff" });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Depend on the token string value only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, sp.get("h")]);
 
   async function onResolveBeneficiary() {
     const v = beneficiaryInput.trim();
@@ -115,7 +172,7 @@ export default function CreateEscrowPage() {
         setAvatarUrl(null);
         setResolveMsg(r.message || `Could not resolve ${v}`);
       }
-    } catch {
+    } catch (e: any) {
       setBeneficiaryAddress(null);
       setAvatarUrl(null);
       setResolveMsg(`Could not resolve ${v}. Try a 0x address.`);
@@ -124,87 +181,11 @@ export default function CreateEscrowPage() {
     }
   }
 
-  // ✅ Handoff: consume ?h=... (signed token) once
-  const consumedHandoffRef = useRef<string | null>(null);
-
+  // Prefill from query params once on mount (fallback path if no token)
   useEffect(() => {
-    const token = sp.get("h") || sp.get("handoff") || sp.get("token");
-    if (!token) return;
-    if (consumedHandoffRef.current === token) return;
+    // If we already consumed a signed token, don't also apply query params
+    if (consumedTokenRef.current) return;
 
-    consumedHandoffRef.current = token;
-
-    let cancelled = false;
-
-    (async () => {
-      setNotice(null);
-
-      try {
-        // IMPORTANT: you need an accept endpoint on usdc.bot that verifies the token
-        // Example path: /api/usdc/accept
-        const res = await fetch("/api/usdc/accept", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ token }),
-        });
-
-        const json = (await res.json().catch(() => ({}))) as HandoffAcceptResponse;
-        if (!res.ok || !(json as any)?.ok) {
-          throw new Error((json as any)?.error || "Handoff failed");
-        }
-
-        const data = json as Extract<HandoffAcceptResponse, { ok: true }>;
-        if (cancelled) return;
-
-        // Apply fields
-        const bInput = String(data.fields.beneficiaryInput ?? "").trim();
-        if (bInput) {
-          setBeneficiaryInput(bInput);
-          setBeneficiaryPrefilled(true);
-          setPrefillResolved(false); // allow the resolve effect to run once
-        }
-
-        if (data.fields.beneficiaryAddress && isAddress(data.fields.beneficiaryAddress)) {
-          setBeneficiaryAddress(data.fields.beneficiaryAddress);
-          setResolveMsg(`Prefilled → ${short(data.fields.beneficiaryAddress)}`);
-          setPrefillResolved(true); // no need to resolve if we already have 0x
-        }
-
-        if (typeof data.fields.amount === "string" && data.fields.amount.trim()) {
-          setAmount(String(data.fields.amount));
-        }
-
-        if (typeof data.fields.memo === "string") {
-          setMemo(String(data.fields.memo));
-        }
-
-        if (typeof data.fields.returnUrl === "string") {
-          setReturnUrl(String(data.fields.returnUrl));
-        }
-
-        if (typeof (data.fields as any).deadline === "string") {
-          setDeadline(String((data.fields as any).deadline));
-        }
-
-        // Optional: show a tiny confirmation
-        setNotice({ type: "ok", msg: "Routed via handoff token." });
-
-        // Clear token from URL so refresh doesn't re-consume it
-        router.replace("/app");
-      } catch (e: any) {
-        if (cancelled) return;
-        setNotice({ type: "err", msg: e?.message || "Failed to accept handoff" });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, sp.get("h"), sp.get("handoff"), sp.get("token")]);
-
-  // Prefill from query params once on mount (legacy non-token prefill)
-  useEffect(() => {
     const b = sp.get("beneficiary");
     const a = sp.get("amount");
     const m = sp.get("memo");
@@ -213,7 +194,6 @@ export default function CreateEscrowPage() {
     if (b) {
       setBeneficiaryInput(safeDecode(b));
       setBeneficiaryPrefilled(true);
-      setPrefillResolved(false);
     }
     if (a) setAmount(safeDecode(a));
     if (m) setMemo(safeDecode(m));
@@ -321,6 +301,25 @@ export default function CreateEscrowPage() {
       <main style={{ padding: 32, maxWidth: 680, margin: "0 auto" }}>
         <h1>Create USDC Escrow (Base Mainnet)</h1>
 
+        {routedFrom ? (
+          <div
+            style={{
+              marginTop: 8,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              borderRadius: 999,
+              fontSize: 12,
+              opacity: 0.85,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "rgba(255,255,255,0.06)",
+            }}
+          >
+            Routed from <span style={{ fontWeight: 650 }}>{routedFrom}</span>
+          </div>
+        ) : null}
+
         {notice && (
           <div
             style={{
@@ -353,6 +352,7 @@ export default function CreateEscrowPage() {
               value={beneficiaryInput}
               onChange={(e) => {
                 setBeneficiaryInput(e.target.value);
+                // if user starts typing, we should not keep showing an old resolved address
                 setBeneficiaryAddress(null);
                 setAvatarUrl(null);
                 setResolveMsg("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
