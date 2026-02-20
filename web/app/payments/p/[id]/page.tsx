@@ -51,6 +51,9 @@ export default function PaymentReceipt() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
+  // ✅ usdc.bot handoff state
+  const [handoffing, setHandoffing] = useState(false);
+
   async function refresh() {
     if (!id) return;
     setLoading(true);
@@ -68,16 +71,11 @@ export default function PaymentReceipt() {
     refresh();
   }, [id]);
 
-  const statusSentence =
-    rec?.status === "linked"
-      ? "Settlement proof linked"
-      : "Proposed (awaiting payment)";
+  const statusSentence = rec?.status === "linked" ? "Settlement proof linked" : "Proposed (awaiting payment)";
 
   const settlementLabel = useMemo(() => {
     if (!rec?.settlement) return null;
-    return rec.settlement.type === "usdc_bot_receipt"
-      ? "Escrow receipt (usdc.bot)"
-      : "View transaction (Basescan)";
+    return rec.settlement.type === "usdc_bot_receipt" ? "Escrow receipt (usdc.bot)" : "View transaction (Basescan)";
   }, [rec?.settlement]);
 
   async function saveProof() {
@@ -115,6 +113,42 @@ export default function PaymentReceipt() {
     }
   }
 
+  // ✅ Call /api/usdc/commit to route to usdc.bot with a signed handoff
+  async function goToUsdcBot() {
+    if (!rec?.id) return;
+
+    setNotice(null);
+    setHandoffing(true);
+
+    try {
+      const res = await fetch("/api/usdc/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          paymentId: rec.id,
+          fields: {
+            // prefer an address; your commit route can accept input too
+            beneficiaryInput: rec.payee?.address,
+            amount: String(rec.amount),
+            memo: rec.memo ?? "",
+          },
+          // optional: carry record context forward if you store it
+          context: rec.context ?? undefined,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not route to usdc.bot");
+      if (!json?.redirect) throw new Error("Commit failed: missing redirect");
+
+      window.location.href = String(json.redirect);
+    } catch (e: any) {
+      setNotice({ type: "err", msg: e?.message || "Could not route to usdc.bot" });
+    } finally {
+      setHandoffing(false);
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -140,7 +174,9 @@ export default function PaymentReceipt() {
             <div className="glassCard">
               <div className="cardTitle">PAYMENT</div>
               <p style={{ opacity: 0.8, marginTop: 10 }}>Not found.</p>
-              <Link href="/payments"><button>Back</button></Link>
+              <Link href="/payments">
+                <button>Back</button>
+              </Link>
             </div>
           </div>
         </main>
@@ -155,12 +191,13 @@ export default function PaymentReceipt() {
         <div className="centerStage">
           <div className="glassCard">
             <div className="cardTitle">PAYMENT INTENT</div>
+
             <StatusTimeline
-  steps={[
-    { key: "created", label: "Created", ts: rec?.createdAt, done: true },
-    { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" },
-  ]}
-/>
+              steps={[
+                { key: "created", label: "Created", ts: rec?.createdAt, done: true },
+                { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" },
+              ]}
+            />
 
             <p className="huge" style={{ marginTop: 6 }}>
               {rec.amount} <span style={{ fontSize: 18 }}>{rec.asset}</span>
@@ -177,9 +214,7 @@ export default function PaymentReceipt() {
 
             <div className="subrow">
               <span>Payee</span>
-              <span style={{ fontFamily: "ui-monospace" }}>
-                {short(rec.payee?.address)}
-              </span>
+              <span style={{ fontFamily: "ui-monospace" }}>{short(rec.payee?.address)}</span>
             </div>
 
             {rec.memo ? (
@@ -199,9 +234,18 @@ export default function PaymentReceipt() {
               <span>
                 {rec.settlement ? (
                   rec.settlement.type === "usdc_bot_receipt" ? (
-                    <a className="underline" href={rec.settlement.value} target="_blank">View receipt</a>
+                    <a className="underline" href={rec.settlement.value} target="_blank" rel="noreferrer">
+                      View receipt
+                    </a>
                   ) : (
-                    <a className="underline" href={`${BASESCAN}/tx/${rec.settlement.value}`} target="_blank">View tx</a>
+                    <a
+                      className="underline"
+                      href={`${BASESCAN}/tx/${rec.settlement.value}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View tx
+                    </a>
                   )
                 ) : (
                   <span style={{ opacity: 0.75 }}>Not linked</span>
@@ -226,23 +270,33 @@ export default function PaymentReceipt() {
                   </button>
                   <button onClick={() => setShowEdit(false)}>Cancel</button>
                 </div>
-                {notice && <p>{notice.type === "err" ? "Error: " : "OK: "}{notice.msg}</p>}
+                {notice && (
+                  <p>
+                    {notice.type === "err" ? "Error: " : "OK: "}
+                    {notice.msg}
+                  </p>
+                )}
               </>
             ) : null}
 
             <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
               {!rec.settlement && (
-                <a
-                  href={`https://usdc.bot/app?beneficiary=${rec.payee.address}&amount=${encodeURIComponent(
-                    rec.amount
-                  )}&memo=${encodeURIComponent(rec.memo ?? "")}&ref=${rec.id}`}
-                  target="_blank"
-                >
-                  <button>Pay via usdc.bot</button>
-                </a>
+                <button onClick={goToUsdcBot} disabled={handoffing}>
+                  {handoffing ? "Routing…" : "Pay via usdc.bot"}
+                </button>
               )}
-              <Link href="/payments/new"><button>Create another</button></Link>
+              <Link href="/payments/new">
+                <button>Create another</button>
+              </Link>
             </div>
+
+            {/* Optional: show notice here too, so routing errors are visible even when edit UI is closed */}
+            {notice && !showEdit ? (
+              <p style={{ marginTop: 10 }}>
+                {notice.type === "err" ? "Error: " : "OK: "}
+                {notice.msg}
+              </p>
+            ) : null}
           </div>
         </div>
       </main>
