@@ -68,11 +68,13 @@ export default function HubHome() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          aud: (preview.route as any).surface ?? preview.route.target,
-          intent: preview.intent,
-          fields: preview.fields,
-          path: preview.route.path, // e.g. /payments/new
-        }),
+  intent: preview.intent,
+  route: {
+    aud: (preview as any).route?.surface ?? (preview as any).route?.target
+    path: preview.route?.path,  // "/new"
+  },
+  fields: preview.fields,
+}),
       });
 
       const json = (await res.json().catch(() => ({}))) as any;
