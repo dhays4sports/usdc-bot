@@ -13,6 +13,10 @@ function short(addr?: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
+function is0x40(v: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(v);
+}
+
 type Settlement =
   | { type: "usdc_bot_receipt"; value: string }
   | { type: "tx_hash"; value: `0x${string}` };
@@ -131,7 +135,18 @@ export default function PaymentReceipt() {
     setHandoffing(true);
 
     try {
-      const beneficiaryInput = getBeneficiaryInputFromRec(rec);
+      const payeeAddrRaw = typeof rec?.payee?.address === "string" ? rec.payee.address.trim() : "";
+      const beneficiaryAddress = is0x40(payeeAddrRaw) ? (payeeAddrRaw as `0x${string}`) : undefined;
+
+      // Always provide a non-empty beneficiaryInput (fallback to address if needed)
+      const beneficiaryInput =
+        getBeneficiaryInputFromRec(rec) || (beneficiaryAddress ? beneficiaryAddress : "");
+
+      const amount = String(rec.amount ?? "").trim();
+      if (!amount) throw new Error("Missing amount on receipt");
+
+      const memo =
+        typeof rec.memo === "string" && rec.memo.trim().length ? rec.memo.trim() : undefined;
 
       const res = await fetch("/api/usdc/commit", {
         method: "POST",
@@ -141,13 +156,10 @@ export default function PaymentReceipt() {
           fields: {
             // ✅ human-friendly input (device.eth / name.base / 0x...)
             beneficiaryInput,
-            // ✅ optional: if you have the resolved address, pass it too
-            beneficiaryAddress:
-              typeof rec?.payee?.address === "string" && rec.payee.address.startsWith("0x")
-                ? (rec.payee.address as `0x${string}`)
-                : undefined,
-            amount: String(rec.amount ?? "").trim(),
-            memo: typeof rec.memo === "string" && rec.memo.trim().length ? rec.memo.trim() : undefined,
+            // ✅ canonical resolved address when valid
+            beneficiaryAddress,
+            amount,
+            memo,
           },
           context: rec.context ?? undefined,
         }),
@@ -211,7 +223,12 @@ export default function PaymentReceipt() {
             <StatusTimeline
               steps={[
                 { key: "created", label: "Created", ts: rec?.createdAt, done: true },
-                { key: "linked", label: "Linked (proof)", ts: rec?.updatedAt, done: rec?.status === "linked" },
+                {
+                  key: "linked",
+                  label: "Linked (proof)",
+                  ts: rec?.updatedAt,
+                  done: rec?.status === "linked",
+                },
               ]}
             />
 
