@@ -48,7 +48,7 @@ function short(addr?: string) {
 
 type UsdcAcceptResponse = {
   ok: true;
-  intent: string;
+  intent: string; // "createEscrow" currently
   fields: {
     beneficiaryInput: string;
     amount: string;
@@ -96,9 +96,14 @@ export default function CreateEscrowPage() {
   const [beneficiaryPrefilled, setBeneficiaryPrefilled] = useState(false);
   const [prefillResolved, setPrefillResolved] = useState(false);
 
-  // ✅ Hub/Payments handoff: accept token ?h=...
+  // ✅ Prevent double-submit and prevent token re-consume
+  const submittingRef = useRef(false);
   const consumedTokenRef = useRef<string | null>(null);
 
+  // ✅ Derived: show deadline as required only in escrow mode
+  const needsDeadline = mode === "escrow";
+
+  // ✅ Accept signed handoff token (?h=...)
   useEffect(() => {
     const token = sp.get("h") || sp.get("handoff") || sp.get("token");
     if (!token) return;
@@ -124,7 +129,7 @@ export default function CreateEscrowPage() {
         const data = json as UsdcAcceptResponse;
         if (cancelled) return;
 
-        // Apply fields
+        // Apply fields from signed handoff
         setBeneficiaryInput(String(data.fields.beneficiaryInput ?? ""));
         setBeneficiaryPrefilled(true);
         setPrefillResolved(false);
@@ -133,14 +138,22 @@ export default function CreateEscrowPage() {
         if (typeof data.fields.memo === "string") setMemo(String(data.fields.memo));
         if (typeof data.fields.returnUrl === "string") setReturnUrl(String(data.fields.returnUrl));
 
-        // Badge
+        // Badge source
         const src =
           (data.context?.source as string | undefined) ||
           (data.context?.upstream?.source as string | undefined) ||
           "payments.chat";
         setRoutedFrom(src);
 
-        // Strip token from URL (prevents refresh from re-consuming)
+        // ✅ Mode hint: if the handoff intent is createEscrow, default to escrow.
+        // (You can change this default if you always want "direct")
+        const intent = String(data.intent ?? "");
+        if (intent.toLowerCase().includes("escrow")) {
+          setMode("escrow");
+        }
+
+        // Strip token-ish params from URL (prevents refresh from re-consuming)
+        // Keep returnUrl / beneficiary / etc. out of the URL too for cleanliness.
         router.replace("/app");
       } catch (e: any) {
         if (cancelled) return;
@@ -152,7 +165,7 @@ export default function CreateEscrowPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, sp.get("h")]);
+  }, [router, sp]);
 
   async function onResolveBeneficiary() {
     const v = beneficiaryInput.trim();
@@ -166,6 +179,7 @@ export default function CreateEscrowPage() {
       return;
     }
 
+    // Direct address
     if (isAddress(v)) {
       setBeneficiaryAddress(v as `0x${string}`);
       setAvatarUrl(null);
@@ -190,7 +204,7 @@ export default function CreateEscrowPage() {
         setAvatarUrl(null);
         setResolveMsg(r.message || `Could not resolve ${v}`);
       }
-    } catch (e: any) {
+    } catch {
       setBeneficiaryAddress(null);
       setAvatarUrl(null);
       setResolveMsg(`Could not resolve ${v}. Try a 0x address.`);
@@ -247,8 +261,17 @@ export default function CreateEscrowPage() {
     return null;
   }
 
+  function normalizeAmountInput(v: string) {
+    // Keep it simple; user can type freely, but trim weird spaces
+    return v.replace(/\s+/g, "");
+  }
+
   async function onSubmit() {
+    // ✅ hard guard against double-click / lag
+    if (submittingRef.current) return;
+
     setNotice(null);
+    setLastTx(null);
 
     if (!isConnected) return setNotice({ type: "err", msg: "Connect your wallet first." });
     if (!publicClient) return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
@@ -261,23 +284,28 @@ export default function CreateEscrowPage() {
       });
     }
 
+    const amountStr = normalizeAmountInput(amount);
     let amount6: bigint;
     try {
-      amount6 = parseUnits(amount, 6);
+      amount6 = parseUnits(amountStr, 6);
+      if (amount6 <= 0n) throw new Error("Amount must be > 0");
     } catch {
       return setNotice({ type: "err", msg: "Amount must be a valid number (example: 1.00)." });
     }
 
-    // ✅ DIRECT PAY
-    if (mode === "direct") {
-      if (!USDC || !isAddress(USDC)) {
-        return setNotice({
-          type: "err",
-          msg: "Missing NEXT_PUBLIC_USDC_BASE (Base USDC token address).",
-        });
-      }
+    submittingRef.current = true;
 
-      try {
+    try {
+      // ✅ DIRECT PAY
+      if (mode === "direct") {
+        if (!USDC || !isAddress(USDC)) {
+          setNotice({
+            type: "err",
+            msg: "Missing NEXT_PUBLIC_USDC_BASE (Base USDC token address).",
+          });
+          return;
+        }
+
         const txHash = await writeContractAsync({
           address: USDC,
           abi: erc20Abi,
@@ -296,24 +324,31 @@ export default function CreateEscrowPage() {
         if (returnUrl) {
           window.location.href = returnUrl;
         } else {
-          router.push(`/tx/${txHash}`);
+          // You don't currently have /tx/[hash] in the snippet,
+          // so default to Basescan instead of a potentially missing route.
+          window.location.href = txUrl(txHash);
         }
-      } catch (e: any) {
-        const msg = e?.shortMessage || e?.message || "Transaction failed or was rejected.";
-        setNotice({ type: "err", msg });
+        return;
       }
-      return;
-    }
 
-    // ✅ ESCROW (existing)
-    if (!deadline) return setNotice({ type: "err", msg: "Pick a deadline." });
+      // ✅ ESCROW
+      if (!needsDeadline) {
+        // Should never happen, but keep logic safe.
+        setNotice({ type: "err", msg: "Escrow mode requires a deadline." });
+        return;
+      }
 
-    const deadlineTs = Math.floor(new Date(deadline).getTime() / 1000);
-    if (!Number.isFinite(deadlineTs) || deadlineTs <= Math.floor(Date.now() / 1000)) {
-      return setNotice({ type: "err", msg: "Deadline must be in the future." });
-    }
+      if (!deadline) {
+        setNotice({ type: "err", msg: "Pick a deadline." });
+        return;
+      }
 
-    try {
+      const deadlineTs = Math.floor(new Date(deadline).getTime() / 1000);
+      if (!Number.isFinite(deadlineTs) || deadlineTs <= Math.floor(Date.now() / 1000)) {
+        setNotice({ type: "err", msg: "Deadline must be in the future." });
+        return;
+      }
+
       const txHash = await writeContractAsync({
         address: COORD,
         abi: coordinatorAbi,
@@ -337,14 +372,16 @@ export default function CreateEscrowPage() {
         return;
       }
 
-      const id = logs[0].args.id;
-      setNotice({ type: "ok", msg: `Escrow created (#${id.toString()}). Redirecting...` });
+      const escrowId = logs[0].args.id;
+      setNotice({ type: "ok", msg: `Escrow created (#${escrowId.toString()}). Redirecting...` });
 
       const qs = returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : "";
-      router.push(`/e/${id.toString()}${qs}`);
+      router.push(`/e/${escrowId.toString()}${qs}`);
     } catch (e: any) {
       const msg = e?.shortMessage || e?.message || "Transaction failed or was rejected.";
       setNotice({ type: "err", msg });
+    } finally {
+      submittingRef.current = false;
     }
   }
 
@@ -382,6 +419,7 @@ export default function CreateEscrowPage() {
               opacity: mode === "direct" ? 1 : 0.75,
               border: mode === "direct" ? "1px solid rgba(255,255,255,0.22)" : undefined,
             }}
+            aria-pressed={mode === "direct"}
           >
             Direct Pay
           </button>
@@ -391,6 +429,7 @@ export default function CreateEscrowPage() {
               opacity: mode === "escrow" ? 1 : 0.75,
               border: mode === "escrow" ? "1px solid rgba(255,255,255,0.22)" : undefined,
             }}
+            aria-pressed={mode === "escrow"}
           >
             Escrow (advanced)
           </button>
@@ -470,8 +509,9 @@ export default function CreateEscrowPage() {
             <input
               style={{ width: "100%" }}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => setAmount(normalizeAmountInput(e.target.value))}
               placeholder="1.00"
+              inputMode="decimal"
             />
           </label>
 
@@ -494,6 +534,7 @@ export default function CreateEscrowPage() {
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
               placeholder={mode === "direct" ? "Optional note" : "What is this escrow for?"}
+              maxLength={180}
             />
           </label>
 
@@ -507,7 +548,13 @@ export default function CreateEscrowPage() {
           ) : null}
 
           <button onClick={onSubmit} disabled={isPending || resolving || !beneficiaryReady}>
-            {isPending ? "Submitting..." : resolving ? "Resolving..." : mode === "direct" ? "Pay USDC" : "Create escrow"}
+            {isPending
+              ? "Submitting..."
+              : resolving
+              ? "Resolving..."
+              : mode === "direct"
+              ? "Pay USDC"
+              : "Create escrow"}
           </button>
 
           <p style={{ fontSize: 12, opacity: 0.75 }}>
@@ -521,6 +568,11 @@ export default function CreateEscrowPage() {
                 ) : (
                   <span style={{ opacity: 0.8 }}>Missing NEXT_PUBLIC_USDC_BASE</span>
                 )}
+                <br />
+                Beneficiary (resolved):{" "}
+                <span style={{ fontFamily: "ui-monospace" }}>
+                  {getBeneficiary0x() ? short(getBeneficiary0x()!) : "—"}
+                </span>
               </>
             ) : (
               <>
