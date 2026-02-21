@@ -3,7 +3,13 @@
 import ExperimentalBanner from "@/components/ExperimentalBanner";
 import Header from "@/components/Header";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAccount, usePublicClient, useWriteContract } from "wagmi";
+import {
+  useAccount,
+  useChainId,
+  usePublicClient,
+  useSwitchChain,
+  useWriteContract,
+} from "wagmi";
 import { coordinatorAbi } from "@/lib/abi";
 import { isAddress, keccak256, parseEventLogs, parseUnits, toHex } from "viem";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -13,6 +19,9 @@ const COORD = process.env.NEXT_PUBLIC_COORDINATOR as `0x${string}`;
 
 // ✅ Base USDC token (set in env)
 const USDC = (process.env.NEXT_PUBLIC_USDC_BASE || "") as `0x${string}`;
+
+// ✅ Base mainnet chain id
+const BASE_CHAIN_ID = 8453;
 
 // Minimal ERC20 transfer ABI
 const erc20Abi = [
@@ -66,6 +75,10 @@ export default function CreateEscrowPage() {
   const publicClient = usePublicClient();
   const { isConnected } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
+
+  // ✅ NEW: chain guard hooks
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
 
   // ✅ Default to direct pay
   const [mode, setMode] = useState<Mode>("direct");
@@ -144,7 +157,8 @@ export default function CreateEscrowPage() {
         // ✅ pull paymentId from context for auto-linking
         const pid =
           (typeof data.context?.paymentId === "string" && data.context.paymentId.trim()) ||
-          (typeof data.context?.upstream?.paymentId === "string" && data.context.upstream.paymentId.trim()) ||
+          (typeof data.context?.upstream?.paymentId === "string" &&
+            data.context.upstream.paymentId.trim()) ||
           "";
         setPaymentId(pid);
 
@@ -280,11 +294,14 @@ export default function CreateEscrowPage() {
     try {
       // Calls the NEW route you added:
       // POST https://payments.chat/api/payments/:id { txHash }
-      const res = await fetch(`https://payments.chat/api/payments/${encodeURIComponent(paymentId)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ txHash }),
-      });
+      const res = await fetch(
+        `https://payments.chat/api/payments/${encodeURIComponent(paymentId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ txHash }),
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) {
@@ -305,6 +322,26 @@ export default function CreateEscrowPage() {
     }
   }
 
+  async function ensureBaseChain(): Promise<boolean> {
+    // If wagmi can't detect chain yet, fail safe
+    if (!chainId) {
+      setNotice({ type: "err", msg: "Wallet network not detected yet. Try again in a moment." });
+      return false;
+    }
+
+    if (chainId === BASE_CHAIN_ID) return true;
+
+    // Try to switch
+    try {
+      setNotice({ type: "err", msg: "Switching wallet to Base…" });
+      await switchChainAsync({ chainId: BASE_CHAIN_ID });
+      return true;
+    } catch {
+      setNotice({ type: "err", msg: "Please switch your wallet network to Base and try again." });
+      return false;
+    }
+  }
+
   async function onSubmit() {
     if (submittingRef.current) return;
 
@@ -312,7 +349,8 @@ export default function CreateEscrowPage() {
     setLastTx(null);
 
     if (!isConnected) return setNotice({ type: "err", msg: "Connect your wallet first." });
-    if (!publicClient) return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
+    if (!publicClient)
+      return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
 
     const beneficiary0x = getBeneficiary0x();
     if (!beneficiary0x) {
@@ -334,6 +372,10 @@ export default function CreateEscrowPage() {
     submittingRef.current = true;
 
     try {
+      // ✅ Base chain guard for BOTH modes (direct + escrow)
+      const onBase = await ensureBaseChain();
+      if (!onBase) return;
+
       // ✅ DIRECT PAY
       if (mode === "direct") {
         if (!USDC || !isAddress(USDC)) {
@@ -356,7 +398,7 @@ export default function CreateEscrowPage() {
 
         await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-        // ✅ NEW: auto-link back on payments.chat (non-fatal)
+        // ✅ auto-link back on payments.chat (non-fatal)
         await tryAutoLinkOnPaymentsChat(txHash);
 
         // Redirect
@@ -444,9 +486,7 @@ export default function CreateEscrowPage() {
             }}
           >
             Routed from <span style={{ fontWeight: 650 }}>{routedFrom}</span>
-            {paymentId ? (
-              <span style={{ opacity: 0.7, marginLeft: 6 }}>(payment {paymentId})</span>
-            ) : null}
+            {paymentId ? <span style={{ opacity: 0.7, marginLeft: 6 }}>(payment {paymentId})</span> : null}
           </div>
         ) : null}
 
@@ -587,13 +627,7 @@ export default function CreateEscrowPage() {
           ) : null}
 
           <button onClick={onSubmit} disabled={isPending || resolving || !beneficiaryReady}>
-            {isPending
-              ? "Submitting..."
-              : resolving
-              ? "Resolving..."
-              : mode === "direct"
-              ? "Pay USDC"
-              : "Create escrow"}
+            {isPending ? "Submitting..." : resolving ? "Resolving..." : mode === "direct" ? "Pay USDC" : "Create escrow"}
           </button>
 
           <p style={{ fontSize: 12, opacity: 0.75 }}>
@@ -612,6 +646,11 @@ export default function CreateEscrowPage() {
                 <span style={{ fontFamily: "ui-monospace" }}>
                   {getBeneficiary0x() ? short(getBeneficiary0x()!) : "—"}
                 </span>
+                <br />
+                Network:{" "}
+                <span style={{ fontFamily: "ui-monospace" }}>
+                  {chainId ? `chainId=${chainId}` : "detecting…"}
+                </span>
               </>
             ) : (
               <>
@@ -621,6 +660,11 @@ export default function CreateEscrowPage() {
                 </a>
                 <br />
                 Memo hash: <code>{memoHash}</code>
+                <br />
+                Network:{" "}
+                <span style={{ fontFamily: "ui-monospace" }}>
+                  {chainId ? `chainId=${chainId}` : "detecting…"}
+                </span>
               </>
             )}
           </p>
