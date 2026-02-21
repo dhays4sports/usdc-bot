@@ -33,7 +33,7 @@ type AcceptResponse = {
     label?: string;
   };
   context?: {
-    source?: string; // ✅ used for the "Routed from hub.chat" badge
+    source?: string; // badge + provenance
     routedFrom?: string;
     [k: string]: any;
   };
@@ -42,6 +42,16 @@ type AcceptResponse = {
 function short(addr?: string | null) {
   if (!addr) return "—";
   return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
+function normalizeAmountInput(v: string) {
+  // trim spaces; keep user freedom beyond that
+  return v.replace(/\s+/g, "");
+}
+
+function isPositiveNumberString(v: string) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
 }
 
 export default function NewPaymentIntentClient() {
@@ -79,9 +89,17 @@ export default function NewPaymentIntentClient() {
     memo: string;
   } | null>(null);
 
+  // ✅ Hard guard against double create
+  const creatingRef = useRef(false);
+
   const canSubmit = useMemo(() => {
-    const n = Number(amount);
-    return !!payeeAddress && !!amount && !isNaN(n) && n > 0 && memo.length <= 180;
+    const amt = normalizeAmountInput(amount);
+    return (
+      !!payeeAddress &&
+      !!amt &&
+      isPositiveNumberString(amt) &&
+      memo.trim().length <= 180
+    );
   }, [payeeAddress, amount, memo]);
 
   function applyFields(args: {
@@ -91,13 +109,17 @@ export default function NewPaymentIntentClient() {
     memo?: string;
     label?: string;
   }) {
-    setPayeeInput(args.payeeInput ?? "");
+    const cleanInput = String(args.payeeInput ?? "").trim();
+    const cleanAmount = normalizeAmountInput(String(args.amount ?? "").trim());
+    const cleanMemo = String(args.memo ?? "").trim();
+
+    setPayeeInput(cleanInput);
     setPayeeAddress(args.payeeAddress ?? null);
-    setAmount(String(args.amount ?? ""));
-    setMemo(String(args.memo ?? ""));
+    setAmount(cleanAmount);
+    setMemo(cleanMemo);
 
     if (args.payeeAddress) {
-      const left = (args.label ?? args.payeeInput ?? "").trim();
+      const left = (args.label ?? cleanInput ?? "").trim();
       const prefix = left ? `${left} → ` : "";
       setResolveMsg(`${prefix}${short(args.payeeAddress)}`);
     } else {
@@ -106,18 +128,15 @@ export default function NewPaymentIntentClient() {
 
     setPreviewApplied(true);
     appliedSnapshotRef.current = {
-      payeeInput: String(args.payeeInput ?? ""),
+      payeeInput: cleanInput,
       payeeAddress: args.payeeAddress ?? null,
-      amount: String(args.amount ?? ""),
-      memo: String(args.memo ?? ""),
+      amount: cleanAmount,
+      memo: cleanMemo,
     };
   }
 
   // ✅ Hub handoff: accept token from ?h=...
-  // Use a ref so we don't re-consume on rerenders.
   const consumedTokenRef = useRef<string | null>(null);
-
-  // IMPORTANT: don't put searchParams.get(...) directly in deps; store the value.
   const handoffToken =
     searchParams.get("h") || searchParams.get("handoff") || searchParams.get("token");
 
@@ -147,11 +166,11 @@ export default function NewPaymentIntentClient() {
         const data = json as AcceptResponse;
         if (cancelled) return;
 
-        // ✅ set badge source from context.source (preferred), fallback to hub.chat if missing
-        const src =
-          String(data?.context?.source ?? data?.context?.routedFrom ?? "hub.chat").trim() ||
+        // ✅ badge source: context.routedFrom is the upstream; context.source is the "surface"
+        const routedFrom =
+          String(data?.context?.routedFrom ?? data?.context?.source ?? "hub.chat").trim() ||
           "hub.chat";
-        setHandoffSource(src);
+        setHandoffSource(routedFrom);
 
         applyFields({
           payeeInput: data.fields.payeeInput,
@@ -185,7 +204,7 @@ export default function NewPaymentIntentClient() {
     const changed =
       snap.payeeInput !== payeeInput ||
       (snap.payeeAddress ?? null) !== (payeeAddress ?? null) ||
-      snap.amount !== amount ||
+      snap.amount !== normalizeAmountInput(amount) ||
       snap.memo !== memo;
 
     if (changed) {
@@ -275,23 +294,38 @@ export default function NewPaymentIntentClient() {
   async function onCreate() {
     setErr(null);
     if (!canSubmit) return;
+    if (creatingRef.current) return;
 
+    const cleanPayeeInput = payeeInput.trim();
+    const cleanAmount = normalizeAmountInput(amount).trim();
+    const cleanMemo = memo.trim();
+
+    if (!cleanPayeeInput) return setErr("Missing payee.");
+    if (!payeeAddress) return setErr("Missing resolved payee address.");
+    if (!isPositiveNumberString(cleanAmount)) return setErr("Amount must be > 0.");
+    if (cleanMemo.length > 180) return setErr("Memo too long (max 180 chars).");
+
+    creatingRef.current = true;
     setSubmitting(true);
+
     try {
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          payeeInput: payeeInput.trim(),
-          payeeAddress,
-          amount: amount.trim(),
-          memo: memo.trim() || undefined,
+          // ✅ cleanest for downstream verifier + usdc.bot prefill
+          payeeInput: cleanPayeeInput, // human-friendly (ens/basename/0x) — used as beneficiaryInput later
+          payeeAddress, // canonical 0x recipient — used for verifier later
+          amount: cleanAmount,
+          memo: cleanMemo || undefined,
           asset: "USDC",
           network: "base",
           context: {
-            // ✅ if we were routed from hub, preserve that as the "source"
-            source: handoffSource ? "hub.chat" : "payments.chat",
-            routedFrom: handoffSource ? handoffSource : undefined,
+            // ✅ provenance:
+            // - payments.chat is the surface creating the intent
+            // - routedFrom carries the upstream surface if it originated elsewhere
+            source: "payments.chat",
+            routedFrom: handoffSource || undefined,
 
             // audit trail for NL preview (payments-side)
             fromCommand: previewApplied ? command.trim() : undefined,
@@ -311,6 +345,7 @@ export default function NewPaymentIntentClient() {
       setErr(e?.message || "Failed");
     } finally {
       setSubmitting(false);
+      creatingRef.current = false;
     }
   }
 
@@ -390,7 +425,9 @@ export default function NewPaymentIntentClient() {
                     <div>
                       <span style={{ opacity: 0.75 }}>To:</span>{" "}
                       <span style={{ opacity: 0.9 }}>
-                        {(preview.label ?? preview.payeeInput) ? `${preview.label ?? preview.payeeInput} → ` : ""}
+                        {(preview.label ?? preview.payeeInput)
+                          ? `${preview.label ?? preview.payeeInput} → `
+                          : ""}
                       </span>
                       <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
                         {preview.payeeAddress ? short(preview.payeeAddress) : "—"}
@@ -432,15 +469,18 @@ export default function NewPaymentIntentClient() {
                 ) : null}
               </div>
 
-              {/* TrustRoute UI removed */}
-
               <div className="divider" style={{ margin: "6px 0" }} />
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Payee</div>
                 <input
                   value={payeeInput}
-                  onChange={(e) => setPayeeInput(e.target.value)}
+                  onChange={(e) => {
+                    setPayeeInput(e.target.value);
+                    // If user edits input, we should require re-resolve
+                    setPayeeAddress(null);
+                    setResolveMsg("Paste 0x, ENS, or Basename.");
+                  }}
                   onBlur={onResolve}
                   placeholder="0x… or vitalik.eth or name.base"
                 />
@@ -449,12 +489,21 @@ export default function NewPaymentIntentClient() {
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Amount (USDC)</div>
-                <input value={amount} onChange={(e) => setAmount(e.target.value)} />
+                <input
+                  value={amount}
+                  onChange={(e) => setAmount(normalizeAmountInput(e.target.value))}
+                  inputMode="decimal"
+                />
               </label>
 
               <label style={{ display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Memo (optional)</div>
-                <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="Max 180 chars" />
+                <input
+                  value={memo}
+                  onChange={(e) => setMemo(e.target.value)}
+                  placeholder="Max 180 chars"
+                  maxLength={180}
+                />
               </label>
 
               {err ? <div style={{ fontSize: 12, opacity: 0.9 }}>Error: {err}</div> : null}
