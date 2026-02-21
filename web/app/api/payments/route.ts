@@ -1,6 +1,8 @@
+// web/app/api/payments/route.ts
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { rateLimit } from "@/lib/rateLimit";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 
@@ -11,21 +13,16 @@ const TR_STATS_KEY = "tr:stats:payments.chat";
 
 async function trIncr(fields: Record<string, number>) {
   try {
-    // Vercel KV: hincrby(key, field, increment)
-    await Promise.all(
-      Object.entries(fields).map(([field, inc]) => kv.hincrby(TR_STATS_KEY, field, inc))
-    );
+    await Promise.all(Object.entries(fields).map(([field, inc]) => kv.hincrby(TR_STATS_KEY, field, inc)));
     await kv.hset(TR_STATS_KEY, { lastActivityAt: new Date().toISOString() });
   } catch {
     // best-effort only
   }
 }
 
+// Stronger id than Math.random
 function newId() {
-  return (
-    Math.random().toString(36).slice(2, 12) +
-    Math.random().toString(36).slice(2, 6)
-  );
+  return crypto.randomBytes(10).toString("hex"); // 20 chars
 }
 
 function is0x40(v: string) {
@@ -35,6 +32,25 @@ function is0x40(v: string) {
 type Settlement =
   | { type: "usdc_bot_receipt"; value: string }
   | { type: "tx_hash"; value: `0x${string}` };
+
+type PaymentIntentRecord = {
+  id: string;
+  createdAt: string;
+  updatedAt?: string;
+  status: "proposed" | "linked" | "settled";
+  network: "base";
+  asset: "USDC";
+  amount: string;
+  memo?: string;
+  payee: {
+    input: string;
+    address: `0x${string}`;
+    label?: string; // optional (nice for display, not required)
+  };
+  settlement?: Settlement;
+  context?: any;
+  version: "v0.1";
+};
 
 export async function POST(req: Request) {
   try {
@@ -53,18 +69,27 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = await req.json();
+    const body = (await req.json().catch(() => ({}))) as any;
 
+    // Inputs
     const payeeInput = String(body.payeeInput ?? "").trim();
     const payeeAddress = String(body.payeeAddress ?? "").trim();
     const amount = String(body.amount ?? "").trim();
-    const memo = String(body.memo ?? "").trim();
+    const memoRaw = typeof body.memo === "string" ? body.memo : "";
+    const memo = memoRaw.trim();
+    const label = typeof body.label === "string" ? body.label.trim() : "";
+
+    // Enforce fixed surface
+    const network = "base" as const;
+    const asset = "USDC" as const;
+
+    if (!payeeInput) {
+      // You *can* loosen this if you want, but it's good hygiene.
+      return NextResponse.json({ error: "Missing payee input" }, { status: 400 });
+    }
 
     if (!is0x40(payeeAddress)) {
-      return NextResponse.json(
-        { error: "Invalid payee address" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid payee address" }, { status: 400 });
     }
 
     const n = Number(amount);
@@ -78,40 +103,27 @@ export async function POST(req: Request) {
 
     const id = newId();
 
-    const rec: {
-      id: string;
-      createdAt: string;
-      updatedAt?: string;
-      status: "proposed" | "linked" | "settled";
-      network: "base";
-      asset: "USDC";
-      amount: string;
-      memo?: string;
-      payee: { input: string; address: `0x${string}` };
-      settlement?: Settlement;
-      context?: any;
-      version: string;
-    } = {
+    const rec: PaymentIntentRecord = {
       id,
       createdAt: new Date().toISOString(),
       status: "proposed",
-      network: "base",
-      asset: "USDC",
+      network,
+      asset,
       amount,
-      memo: memo || undefined,
+      memo: memo ? memo : undefined,
       payee: {
         input: payeeInput,
         address: payeeAddress as `0x${string}`,
+        label: label ? label : undefined,
       },
       settlement: undefined,
       context: body?.context ?? undefined,
       version: "v0.1",
     };
 
-    // ✅ Write the intent
     await kv.set(KEY(id), rec);
 
-    // ✅ TrustRoute v0.1: aggregate "created" (simple counter only)
+    // TrustRoute v0.1: aggregate "created"
     await trIncr({ intentsCreated: 1 });
 
     return NextResponse.json({ ok: true, id }, { status: 200 });
