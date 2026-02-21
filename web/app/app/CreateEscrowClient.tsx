@@ -11,6 +11,23 @@ import { resolveNameToAddress } from "@/lib/nameResolve";
 
 const COORD = process.env.NEXT_PUBLIC_COORDINATOR as `0x${string}`;
 
+// ✅ Base USDC token (set in env)
+const USDC = (process.env.NEXT_PUBLIC_USDC_BASE || "") as `0x${string}`;
+
+// Minimal ERC20 transfer ABI
+const erc20Abi = [
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
 // Base mainnet explorer
 const BASESCAN = "https://basescan.org";
 const txUrl = (h?: string) => (h ? `${BASESCAN}/tx/${h}` : "#");
@@ -41,12 +58,17 @@ type UsdcAcceptResponse = {
   context?: any;
 };
 
+type Mode = "direct" | "escrow";
+
 export default function CreateEscrowPage() {
   const router = useRouter();
   const sp = useSearchParams();
   const publicClient = usePublicClient();
   const { isConnected } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
+
+  // ✅ Default to direct pay
+  const [mode, setMode] = useState<Mode>("direct");
 
   // Beneficiary input (can be ENS / basename / 0x)
   const [beneficiaryInput, setBeneficiaryInput] = useState("");
@@ -129,14 +151,12 @@ export default function CreateEscrowPage() {
     return () => {
       cancelled = true;
     };
-    // Depend on the token string value only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, sp.get("h")]);
 
   async function onResolveBeneficiary() {
     const v = beneficiaryInput.trim();
 
-    // reset prior status
     setNotice(null);
 
     if (!v) {
@@ -146,7 +166,6 @@ export default function CreateEscrowPage() {
       return;
     }
 
-    // Fast path: direct address
     if (isAddress(v)) {
       setBeneficiaryAddress(v as `0x${string}`);
       setAvatarUrl(null);
@@ -162,7 +181,6 @@ export default function CreateEscrowPage() {
 
       if (r.ok) {
         setBeneficiaryAddress(r.address);
-        // optional avatarUrl support (if your resolver returns it)
         setAvatarUrl((r as any).avatarUrl ?? null);
 
         const label = r.label ? `${r.label} → ` : "";
@@ -183,7 +201,6 @@ export default function CreateEscrowPage() {
 
   // Prefill from query params once on mount (fallback path if no token)
   useEffect(() => {
-    // If we already consumed a signed token, don't also apply query params
     if (consumedTokenRef.current) return;
 
     const b = sp.get("beneficiary");
@@ -201,7 +218,7 @@ export default function CreateEscrowPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If beneficiary was prefilled, resolve it exactly once (no keystroke spam)
+  // If beneficiary was prefilled, resolve it exactly once
   useEffect(() => {
     if (!beneficiaryPrefilled) return;
     if (prefillResolved) return;
@@ -223,21 +240,20 @@ export default function CreateEscrowPage() {
   const beneficiaryReady =
     isAddress(beneficiaryInput.trim()) || (beneficiaryAddress && isAddress(beneficiaryAddress));
 
-  async function onCreate() {
+  function getBeneficiary0x(): `0x${string}` | null {
+    const b = beneficiaryInput.trim();
+    if (isAddress(b)) return b as `0x${string}`;
+    if (beneficiaryAddress && isAddress(beneficiaryAddress)) return beneficiaryAddress;
+    return null;
+  }
+
+  async function onSubmit() {
     setNotice(null);
 
     if (!isConnected) return setNotice({ type: "err", msg: "Connect your wallet first." });
     if (!publicClient) return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
 
-    const b = beneficiaryInput.trim();
-    let beneficiary0x: `0x${string}` | null = null;
-
-    if (isAddress(b)) {
-      beneficiary0x = b as `0x${string}`;
-    } else if (beneficiaryAddress) {
-      beneficiary0x = beneficiaryAddress;
-    }
-
+    const beneficiary0x = getBeneficiary0x();
     if (!beneficiary0x) {
       return setNotice({
         type: "err",
@@ -245,14 +261,52 @@ export default function CreateEscrowPage() {
       });
     }
 
-    if (!deadline) return setNotice({ type: "err", msg: "Pick a deadline." });
-
     let amount6: bigint;
     try {
       amount6 = parseUnits(amount, 6);
     } catch {
       return setNotice({ type: "err", msg: "Amount must be a valid number (example: 1.00)." });
     }
+
+    // ✅ DIRECT PAY
+    if (mode === "direct") {
+      if (!USDC || !isAddress(USDC)) {
+        return setNotice({
+          type: "err",
+          msg: "Missing NEXT_PUBLIC_USDC_BASE (Base USDC token address).",
+        });
+      }
+
+      try {
+        const txHash = await writeContractAsync({
+          address: USDC,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [beneficiary0x, amount6],
+        });
+
+        setLastTx(txHash);
+        setNotice({ type: "ok", msg: "Transfer submitted. Waiting for confirmation..." });
+
+        await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+        setNotice({ type: "ok", msg: "Paid. Redirecting..." });
+
+        // If we have a returnUrl, go there; otherwise show tx
+        if (returnUrl) {
+          window.location.href = returnUrl;
+        } else {
+          router.push(`/tx/${txHash}`);
+        }
+      } catch (e: any) {
+        const msg = e?.shortMessage || e?.message || "Transaction failed or was rejected.";
+        setNotice({ type: "err", msg });
+      }
+      return;
+    }
+
+    // ✅ ESCROW (existing)
+    if (!deadline) return setNotice({ type: "err", msg: "Pick a deadline." });
 
     const deadlineTs = Math.floor(new Date(deadline).getTime() / 1000);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= Math.floor(Date.now() / 1000)) {
@@ -299,7 +353,7 @@ export default function CreateEscrowPage() {
       <Header />
       <ExperimentalBanner />
       <main style={{ padding: 32, maxWidth: 680, margin: "0 auto" }}>
-        <h1>Create USDC Escrow (Base Mainnet)</h1>
+        <h1>USDC (Base Mainnet)</h1>
 
         {routedFrom ? (
           <div
@@ -319,6 +373,34 @@ export default function CreateEscrowPage() {
             Routed from <span style={{ fontWeight: 650 }}>{routedFrom}</span>
           </div>
         ) : null}
+
+        {/* Mode toggle */}
+        <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={() => setMode("direct")}
+            style={{
+              opacity: mode === "direct" ? 1 : 0.75,
+              border: mode === "direct" ? "1px solid rgba(255,255,255,0.22)" : undefined,
+            }}
+          >
+            Direct Pay
+          </button>
+          <button
+            onClick={() => setMode("escrow")}
+            style={{
+              opacity: mode === "escrow" ? 1 : 0.75,
+              border: mode === "escrow" ? "1px solid rgba(255,255,255,0.22)" : undefined,
+            }}
+          >
+            Escrow (advanced)
+          </button>
+
+          <div style={{ fontSize: 12, opacity: 0.7, alignSelf: "center" }}>
+            {mode === "direct"
+              ? "Sends USDC directly to the beneficiary."
+              : "Creates an escrow you can release later."}
+          </div>
+        </div>
 
         {notice && (
           <div
@@ -352,7 +434,6 @@ export default function CreateEscrowPage() {
               value={beneficiaryInput}
               onChange={(e) => {
                 setBeneficiaryInput(e.target.value);
-                // if user starts typing, we should not keep showing an old resolved address
                 setBeneficiaryAddress(null);
                 setAvatarUrl(null);
                 setResolveMsg("Paste 0x, ENS (vitalik.eth), or Basename (name.base).");
@@ -380,9 +461,7 @@ export default function CreateEscrowPage() {
                   }}
                 />
               )}
-              <div style={{ fontSize: 12, opacity: 0.75 }}>
-                {resolving ? "Resolving…" : resolveMsg}
-              </div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>{resolving ? "Resolving…" : resolveMsg}</div>
             </div>
           </label>
 
@@ -396,15 +475,17 @@ export default function CreateEscrowPage() {
             />
           </label>
 
-          <label>
-            Deadline
-            <input
-              style={{ width: "100%" }}
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-            />
-          </label>
+          {mode === "escrow" ? (
+            <label>
+              Deadline
+              <input
+                style={{ width: "100%" }}
+                type="datetime-local"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+              />
+            </label>
+          ) : null}
 
           <label>
             Memo (optional)
@@ -412,30 +493,45 @@ export default function CreateEscrowPage() {
               style={{ width: "100%" }}
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              placeholder="What is this escrow for?"
+              placeholder={mode === "direct" ? "Optional note" : "What is this escrow for?"}
             />
           </label>
 
           {returnUrl ? (
             <p style={{ fontSize: 12, opacity: 0.75, marginTop: -4 }}>
-              Return after escrow:{" "}
+              Return after:{" "}
               <a className="underline" href={returnUrl} target="_blank" rel="noreferrer">
                 {returnUrl}
               </a>
             </p>
           ) : null}
 
-          <button onClick={onCreate} disabled={isPending || resolving || !beneficiaryReady}>
-            {isPending ? "Submitting..." : resolving ? "Resolving..." : "Create escrow"}
+          <button onClick={onSubmit} disabled={isPending || resolving || !beneficiaryReady}>
+            {isPending ? "Submitting..." : resolving ? "Resolving..." : mode === "direct" ? "Pay USDC" : "Create escrow"}
           </button>
 
           <p style={{ fontSize: 12, opacity: 0.75 }}>
-            Coordinator:{" "}
-            <a className="underline" href={addrUrl(COORD)} target="_blank" rel="noreferrer">
-              <code>{COORD}</code>
-            </a>
-            <br />
-            Memo hash: <code>{memoHash}</code>
+            {mode === "direct" ? (
+              <>
+                Token:{" "}
+                {USDC ? (
+                  <a className="underline" href={addrUrl(USDC)} target="_blank" rel="noreferrer">
+                    <code>{USDC}</code>
+                  </a>
+                ) : (
+                  <span style={{ opacity: 0.8 }}>Missing NEXT_PUBLIC_USDC_BASE</span>
+                )}
+              </>
+            ) : (
+              <>
+                Coordinator:{" "}
+                <a className="underline" href={addrUrl(COORD)} target="_blank" rel="noreferrer">
+                  <code>{COORD}</code>
+                </a>
+                <br />
+                Memo hash: <code>{memoHash}</code>
+              </>
+            )}
           </p>
         </div>
       </main>
