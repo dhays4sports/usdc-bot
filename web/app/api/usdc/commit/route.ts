@@ -1,6 +1,7 @@
 // web/app/api/usdc/commit/route.ts
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { rateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -25,24 +26,40 @@ function nonce() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-type CommitBody = {
-  // Payment receipt id (so we can construct return link)
-  paymentId: string;
+function isPositiveAmount(v: string) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
+}
 
-  // Pre-fill fields for usdc.bot
+type CommitBody = {
+  paymentId: string;
   fields: {
-    beneficiaryInput?: string; // can be ENS/name.base/0x
-    beneficiaryAddress?: `0x${string}`; // optional
+    beneficiaryInput?: string;
+    beneficiaryAddress?: `0x${string}`;
     amount?: string;
     memo?: string;
     returnUrl?: string;
   };
-
-  // Optional context chain
   context?: any;
 };
 
 export async function POST(req: Request) {
+  // ✅ rate limit
+  const rl = await rateLimit({
+    surface: "payments",
+    action: "commit",
+    req,
+    limit: 60,
+    windowSec: 60,
+  });
+
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Try again soon." },
+      { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
+    );
+  }
+
   try {
     const body = (await req.json().catch(() => ({}))) as Partial<CommitBody>;
 
@@ -55,14 +72,17 @@ export async function POST(req: Request) {
     const amount = String(f.amount ?? "").trim();
     const memo = typeof f.memo === "string" ? f.memo : undefined;
 
-    if (!beneficiaryInput) return NextResponse.json({ error: "Missing fields.beneficiaryInput" }, { status: 400 });
+    if (!beneficiaryInput) {
+      return NextResponse.json({ error: "Missing fields.beneficiaryInput" }, { status: 400 });
+    }
     if (!amount) return NextResponse.json({ error: "Missing fields.amount" }, { status: 400 });
+    if (!isPositiveAmount(amount)) {
+      return NextResponse.json({ error: "Invalid fields.amount" }, { status: 400 });
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const ttlSec = 120;
 
-    // Construct a return URL back to this exact payment receipt
-    // (You can change this if your host routing differs.)
     const returnUrl =
       String(f.returnUrl ?? "").trim() ||
       `https://payments.chat/p/${encodeURIComponent(paymentId)}`;
@@ -85,13 +105,12 @@ export async function POST(req: Request) {
       context: {
         source: "payments.chat",
         paymentId,
-        upstream: body.context ?? undefined, // carry hub context if you want
+        upstream: body.context ?? undefined,
       },
     };
 
     const token = sign(payload);
 
-    // Send token + return url. usdc.bot can also accept return directly as a query param.
     const redirect =
       `https://usdc.bot/app?h=${encodeURIComponent(token)}` +
       `&return=${encodeURIComponent(returnUrl)}`;
