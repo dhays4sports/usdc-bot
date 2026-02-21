@@ -63,6 +63,17 @@ export async function POST(req: Request) {
 
     const p = v.payload;
 
+    // version
+if (Number(p.v ?? 0) !== 1) {
+  return NextResponse.json({ error: "Unsupported token version" }, { status: 400 });
+}
+
+// intent allowlist (tight)
+const intent = String(p.intent ?? "");
+if (intent !== "createEscrow") {
+  return NextResponse.json({ error: "Unsupported intent" }, { status: 400 });
+}
+
     // iss
     const iss = String(p.iss ?? "");
     if (iss !== "payments.chat" && iss !== "hub.chat") {
