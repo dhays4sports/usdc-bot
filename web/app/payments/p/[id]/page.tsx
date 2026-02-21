@@ -72,7 +72,8 @@ export default function PaymentReceipt() {
     refresh();
   }, [id]);
 
-  const statusSentence = rec?.status === "linked" ? "Settlement proof linked" : "Proposed (awaiting payment)";
+  const statusSentence =
+    rec?.status === "linked" ? "Settlement proof linked" : "Proposed (awaiting payment)";
 
   async function saveProof() {
     if (!id) return;
@@ -109,6 +110,18 @@ export default function PaymentReceipt() {
     }
   }
 
+  // ✅ Cleanest schema alignment for usdc.bot prefill
+  // Priority: original input -> label -> address
+  function getBeneficiaryInputFromRec(r: any): string {
+    const payee = r?.payee ?? {};
+    const input =
+      (typeof payee.input === "string" && payee.input.trim()) ||
+      (typeof payee.label === "string" && payee.label.trim()) ||
+      (typeof payee.address === "string" && payee.address.trim()) ||
+      "";
+    return input;
+  }
+
   // ✅ Call /api/usdc/commit to route to usdc.bot with a signed handoff
   async function goToUsdcBot() {
     if (!rec?.id) return;
@@ -117,25 +130,25 @@ export default function PaymentReceipt() {
     setNotice(null);
     setHandoffing(true);
 
-    // Prefer address; fallback to any saved "input" flavor you might store
-    const beneficiaryInput =
-      rec?.payee?.address ||
-      rec?.payee?.input ||
-      rec?.payeeInput ||
-      "";
-
     try {
+      const beneficiaryInput = getBeneficiaryInputFromRec(rec);
+
       const res = await fetch("/api/usdc/commit", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           paymentId: rec.id,
           fields: {
+            // ✅ human-friendly input (device.eth / name.base / 0x...)
             beneficiaryInput,
-            amount: String(rec.amount ?? ""),
+            // ✅ optional: if you have the resolved address, pass it too
+            beneficiaryAddress:
+              typeof rec?.payee?.address === "string" && rec.payee.address.startsWith("0x")
+                ? (rec.payee.address as `0x${string}`)
+                : undefined,
+            amount: String(rec.amount ?? "").trim(),
             memo: typeof rec.memo === "string" && rec.memo.trim().length ? rec.memo.trim() : undefined,
           },
-          // carry context forward if you store it
           context: rec.context ?? undefined,
         }),
       });
@@ -273,28 +286,26 @@ export default function PaymentReceipt() {
                   </button>
                   <button onClick={() => setShowEdit(false)}>Cancel</button>
                 </div>
-                {notice ? (
+                {notice && (
                   <p style={{ marginTop: 10 }}>
                     {notice.type === "err" ? "Error: " : "OK: "}
                     {notice.msg}
                   </p>
-                ) : null}
+                )}
               </>
             ) : null}
 
             <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
-              {!rec.settlement ? (
+              {!rec.settlement && (
                 <button onClick={goToUsdcBot} disabled={handoffing}>
                   {handoffing ? "Routing…" : "Pay via usdc.bot"}
                 </button>
-              ) : null}
-
+              )}
               <Link href="/payments/new">
                 <button>Create another</button>
               </Link>
             </div>
 
-            {/* show notices even when edit UI is closed */}
             {notice && !showEdit ? (
               <p style={{ marginTop: 10 }}>
                 {notice.type === "err" ? "Error: " : "OK: "}
