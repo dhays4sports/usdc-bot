@@ -55,6 +55,24 @@ function short(addr?: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
+function appendTxHash(returnUrl: string, txHash: `0x${string}`) {
+  const raw = String(returnUrl || "").trim();
+  if (!raw) return raw;
+
+  try {
+    const u = new URL(raw);
+    // don’t overwrite if already present
+    if (!u.searchParams.get("txHash")) {
+      u.searchParams.set("txHash", txHash);
+    }
+    return u.toString();
+  } catch {
+    // if returnUrl isn't a valid absolute URL, fall back safely
+    const joiner = raw.includes("?") ? "&" : "?";
+    return `${raw}${joiner}txHash=${encodeURIComponent(txHash)}`;
+  }
+}
+
 type UsdcAcceptResponse = {
   ok: true;
   intent: string; // "createEscrow" currently
@@ -76,7 +94,7 @@ export default function CreateEscrowPage() {
   const { isConnected } = useAccount();
   const { writeContractAsync, isPending } = useWriteContract();
 
-  // ✅ NEW: chain guard hooks
+  // ✅ chain guard hooks
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
@@ -105,7 +123,7 @@ export default function CreateEscrowPage() {
   // Routed-from badge (handoff context)
   const [routedFrom, setRoutedFrom] = useState<string | null>(null);
 
-  // ✅ NEW: paymentId (for auto-linking on payments.chat)
+  // ✅ paymentId (for auto-linking on payments.chat)
   const [paymentId, setPaymentId] = useState<string>("");
 
   // Track whether beneficiary was prefilled by query param
@@ -288,24 +306,30 @@ export default function CreateEscrowPage() {
   }
 
   async function tryAutoLinkOnPaymentsChat(txHash: `0x${string}`) {
-    // Only if we have a paymentId from the handoff
     if (!paymentId) return;
 
+    const url = `https://payments.chat/api/payments/${encodeURIComponent(paymentId)}`;
+    const payload = JSON.stringify({ txHash });
+
     try {
-      // Calls the NEW route you added:
-      // POST https://payments.chat/api/payments/:id { txHash }
-      const res = await fetch(
-        `https://payments.chat/api/payments/${encodeURIComponent(paymentId)}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ txHash }),
-        }
-      );
+      // ✅ Best-effort fire-and-forget that survives navigation
+      if (typeof navigator !== "undefined" && "sendBeacon" in navigator) {
+        const blob = new Blob([payload], { type: "application/json" });
+        const ok = navigator.sendBeacon(url, blob);
+        if (ok) return;
+      }
+
+      // ✅ Fallback
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload,
+        // important for iOS/Safari when a redirect happens right after
+        keepalive: true,
+      });
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) {
-        // non-fatal (user still paid)
         console.warn("Auto-link failed:", json?.error || res.statusText);
         setNotice({
           type: "ok",
@@ -313,7 +337,6 @@ export default function CreateEscrowPage() {
         });
       }
     } catch (e) {
-      // non-fatal
       console.warn("Auto-link network error:", e);
       setNotice({
         type: "ok",
@@ -323,7 +346,6 @@ export default function CreateEscrowPage() {
   }
 
   async function ensureBaseChain(): Promise<boolean> {
-    // If wagmi can't detect chain yet, fail safe
     if (!chainId) {
       setNotice({ type: "err", msg: "Wallet network not detected yet. Try again in a moment." });
       return false;
@@ -331,7 +353,6 @@ export default function CreateEscrowPage() {
 
     if (chainId === BASE_CHAIN_ID) return true;
 
-    // Try to switch
     try {
       setNotice({ type: "err", msg: "Switching wallet to Base…" });
       await switchChainAsync({ chainId: BASE_CHAIN_ID });
@@ -349,8 +370,7 @@ export default function CreateEscrowPage() {
     setLastTx(null);
 
     if (!isConnected) return setNotice({ type: "err", msg: "Connect your wallet first." });
-    if (!publicClient)
-      return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
+    if (!publicClient) return setNotice({ type: "err", msg: "Client not ready. Refresh and try again." });
 
     const beneficiary0x = getBeneficiary0x();
     if (!beneficiary0x) {
@@ -372,17 +392,13 @@ export default function CreateEscrowPage() {
     submittingRef.current = true;
 
     try {
-      // ✅ Base chain guard for BOTH modes (direct + escrow)
       const onBase = await ensureBaseChain();
       if (!onBase) return;
 
       // ✅ DIRECT PAY
       if (mode === "direct") {
         if (!USDC || !isAddress(USDC)) {
-          setNotice({
-            type: "err",
-            msg: "Missing NEXT_PUBLIC_USDC_BASE (Base USDC token address).",
-          });
+          setNotice({ type: "err", msg: "Missing NEXT_PUBLIC_USDC_BASE (Base USDC token address)." });
           return;
         }
 
@@ -398,12 +414,12 @@ export default function CreateEscrowPage() {
 
         await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-        // ✅ auto-link back on payments.chat (non-fatal)
+        // ✅ best effort: auto-link *before* redirect
         await tryAutoLinkOnPaymentsChat(txHash);
 
-        // Redirect
+        // ✅ IMPORTANT: always return with txHash so payments.chat can link even if beacon/fetch fails
         if (returnUrl) {
-          window.location.href = returnUrl;
+          window.location.href = appendTxHash(returnUrl, txHash);
         } else {
           window.location.href = txUrl(txHash);
         }
@@ -486,11 +502,12 @@ export default function CreateEscrowPage() {
             }}
           >
             Routed from <span style={{ fontWeight: 650 }}>{routedFrom}</span>
-            {paymentId ? <span style={{ opacity: 0.7, marginLeft: 6 }}>(payment {paymentId})</span> : null}
+            {paymentId ? (
+              <span style={{ opacity: 0.7, marginLeft: 6 }}>(payment {paymentId})</span>
+            ) : null}
           </div>
         ) : null}
 
-        {/* Mode toggle */}
         <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button
             onClick={() => setMode("direct")}
@@ -579,7 +596,9 @@ export default function CreateEscrowPage() {
                   }}
                 />
               )}
-              <div style={{ fontSize: 12, opacity: 0.75 }}>{resolving ? "Resolving…" : resolveMsg}</div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                {resolving ? "Resolving…" : resolveMsg}
+              </div>
             </div>
           </label>
 
@@ -627,7 +646,13 @@ export default function CreateEscrowPage() {
           ) : null}
 
           <button onClick={onSubmit} disabled={isPending || resolving || !beneficiaryReady}>
-            {isPending ? "Submitting..." : resolving ? "Resolving..." : mode === "direct" ? "Pay USDC" : "Create escrow"}
+            {isPending
+              ? "Submitting..."
+              : resolving
+              ? "Resolving..."
+              : mode === "direct"
+              ? "Pay USDC"
+              : "Create escrow"}
           </button>
 
           <p style={{ fontSize: 12, opacity: 0.75 }}>
