@@ -36,34 +36,50 @@ function cleanMemo(v: any) {
   if (typeof v !== "string") return undefined;
   const m = v.trim();
   if (!m) return undefined;
-  // keep consistent with payments memo policy (<= 180)
   return m.length > 180 ? m.slice(0, 180) : m;
+}
+
+/**
+ * ✅ Prevent open-redirects.
+ * Only allow returning to payments.chat (or www.payments.chat).
+ */
+function safeReturnUrl(input: string, paymentId: string) {
+  const fallback = `https://payments.chat/p/${encodeURIComponent(paymentId)}`;
+
+  const raw = String(input ?? "").trim();
+  if (!raw) return fallback;
+
+  try {
+    const u = new URL(raw);
+
+    // only https
+    if (u.protocol !== "https:") return fallback;
+
+    const host = u.hostname.toLowerCase();
+    if (host !== "payments.chat" && host !== "www.payments.chat") return fallback;
+
+    return u.toString();
+  } catch {
+    return fallback;
+  }
 }
 
 // ---- types ----
 type CommitBody = {
-  // Payment receipt id (so we can construct return link)
   paymentId: string;
 
-  // Pre-fill fields for usdc.bot
   fields: {
-    // Cleanest: a name/address string (often you pass the 0x here; that’s fine)
     beneficiaryInput?: string;
-
-    // Best: canonical 0x address (if known)
     beneficiaryAddress?: `0x${string}`;
-
     amount?: string;
     memo?: string;
     returnUrl?: string;
   };
 
-  // Optional context chain
   context?: any;
 };
 
 export async function POST(req: Request) {
-  // ✅ rate limit (payments surface, commit action)
   const rl = await rateLimit({
     surface: "payments",
     action: "commit",
@@ -87,9 +103,6 @@ export async function POST(req: Request) {
 
     const f = (body.fields ?? {}) as CommitBody["fields"];
 
-    // ✅ Align to your payments schema:
-    // - beneficiaryInput = whatever your UI stored as "payee.input" (string)
-    // - beneficiaryAddress = the canonical 0x "payee.address" when available
     const beneficiaryInput = String(f.beneficiaryInput ?? "").trim();
     const beneficiaryAddress = f.beneficiaryAddress ? String(f.beneficiaryAddress).trim() : "";
 
@@ -100,7 +113,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing fields.beneficiaryInput" }, { status: 400 });
     }
 
-    // If beneficiaryAddress is provided, validate it
     if (beneficiaryAddress && !is0x40(beneficiaryAddress)) {
       return NextResponse.json({ error: "Invalid fields.beneficiaryAddress" }, { status: 400 });
     }
@@ -113,9 +125,11 @@ export async function POST(req: Request) {
     const now = Math.floor(Date.now() / 1000);
     const ttlSec = 120;
 
-    // Return to the payment receipt by default
-    const returnUrl =
-      String(f.returnUrl ?? "").trim() || `https://payments.chat/p/${encodeURIComponent(paymentId)}`;
+    // ✅ Return to the payment receipt by default, but lock it to payments.chat
+    const returnUrl = safeReturnUrl(
+      String(f.returnUrl ?? "").trim() || `https://payments.chat/p/${encodeURIComponent(paymentId)}`,
+      paymentId
+    );
 
     const payload = {
       v: 1,
@@ -127,11 +141,10 @@ export async function POST(req: Request) {
       intent: "createEscrow",
       fields: {
         beneficiaryInput,
-        // only include beneficiaryAddress when present + valid
         beneficiaryAddress: beneficiaryAddress ? (beneficiaryAddress as `0x${string}`) : undefined,
         amount,
         memo,
-        returnUrl,
+        returnUrl, // ✅ single source of truth for return target
       },
       context: {
         source: "payments.chat",
@@ -142,12 +155,16 @@ export async function POST(req: Request) {
 
     const token = sign(payload);
 
-    // ✅ redirect into usdc.bot app path with signed handoff token
-    const redirect =
-      `https://usdc.bot/app?h=${encodeURIComponent(token)}` + `&return=${encodeURIComponent(returnUrl)}`;
+    // ✅ IMPORTANT CHANGE:
+    // Do NOT pass `&return=` in the URL. It can race with token consumption on usdc.bot.
+    // The signed token already includes `fields.returnUrl`.
+    const redirect = `https://usdc.bot/app?h=${encodeURIComponent(token)}`;
 
     return NextResponse.json({ ok: true, redirect, ttlSec }, { status: 200 });
   } catch (err: any) {
-    return NextResponse.json({ error: "Server error", detail: String(err?.message ?? err) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Server error", detail: String(err?.message ?? err) },
+      { status: 500 }
+    );
   }
 }
