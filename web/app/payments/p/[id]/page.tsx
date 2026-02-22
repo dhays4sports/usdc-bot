@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import StatusTimeline from "@/components/StatusTimeline";
 import Link from "next/link";
@@ -58,12 +58,25 @@ function normalizeTxHashFromQuery(v: string | null): `0x${string}` | null {
   return null;
 }
 
+function stripAutoLinkParams(router: ReturnType<typeof useRouter>) {
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.delete("txHash");
+    u.searchParams.delete("paymentId");
+    u.searchParams.delete("from");
+
+    const qs = u.searchParams.toString();
+    router.replace(qs ? `${u.pathname}?${qs}` : u.pathname);
+  } catch {
+    // ignore
+  }
+}
+
 export default function PaymentReceipt() {
   const params = useParams();
   const id = params?.id as string | undefined;
 
   const router = useRouter();
-  const sp = useSearchParams();
 
   const [rec, setRec] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -197,29 +210,25 @@ export default function PaymentReceipt() {
     }
   }
 
-  // ✅ NEW: Auto-link if we were redirected back with ?txHash=...
+  // ✅ Auto-link if we were redirected back with ?txHash=...
   useEffect(() => {
     if (!id) return;
     if (!rec) return;
 
-    // Only run once per mount
+    // only run once per mount
     if (autoLinkedOnceRef.current) return;
 
-    // Already linked? nothing to do
+    // already linked? nothing to do (but clean URL)
     if (rec?.status === "linked" || rec?.status === "settled" || rec?.settlement) {
-      // still strip txHash param if it's hanging around
-      const tx = sp.get("txHash");
-      if (tx) {
-        const u = new URL(window.location.href);
-        u.searchParams.delete("txHash");
-        u.searchParams.delete("paymentId");
-        u.searchParams.delete("from");
-        router.replace(u.pathname + (u.search ? `?${u.searchParams.toString()}` : ""));
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("txHash") || params.get("paymentId") || params.get("from")) {
+        stripAutoLinkParams(router);
       }
       return;
     }
 
-    const txHash = normalizeTxHashFromQuery(sp.get("txHash"));
+    const params = new URLSearchParams(window.location.search);
+    const txHash = normalizeTxHashFromQuery(params.get("txHash"));
     if (!txHash) return;
 
     autoLinkedOnceRef.current = true;
@@ -242,7 +251,9 @@ export default function PaymentReceipt() {
           if (cancelled) return;
           setNotice({
             type: "err",
-            msg: json?.error || "Could not auto-link proof. You can still paste the tx hash manually.",
+            msg:
+              json?.error ||
+              "Could not auto-link proof. You can still paste the tx hash manually.",
           });
           return;
         }
@@ -255,16 +266,13 @@ export default function PaymentReceipt() {
         await refresh();
 
         // strip txHash param so refresh doesn't re-run
-        const u = new URL(window.location.href);
-        u.searchParams.delete("txHash");
-        u.searchParams.delete("paymentId");
-        u.searchParams.delete("from");
-        router.replace(u.pathname + (u.searchParams.toString() ? `?${u.searchParams.toString()}` : ""));
+        stripAutoLinkParams(router);
       } catch {
         if (cancelled) return;
         setNotice({
           type: "err",
-          msg: "Network error auto-linking proof. You can still paste the tx hash manually.",
+          msg:
+            "Network error auto-linking proof. You can still paste the tx hash manually.",
         });
       } finally {
         if (!cancelled) setAutoLinking(false);
@@ -275,7 +283,7 @@ export default function PaymentReceipt() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, rec, sp, router]);
+  }, [id, rec, router]);
 
   if (loading) {
     return (
@@ -367,7 +375,12 @@ export default function PaymentReceipt() {
               <span>
                 {rec.settlement ? (
                   rec.settlement.type === "usdc_bot_receipt" ? (
-                    <a className="underline" href={rec.settlement.value} target="_blank" rel="noreferrer">
+                    <a
+                      className="underline"
+                      href={rec.settlement.value}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       View receipt
                     </a>
                   ) : (
