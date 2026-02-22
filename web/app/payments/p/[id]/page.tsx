@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import StatusTimeline from "@/components/StatusTimeline";
 import Link from "next/link";
@@ -43,9 +43,27 @@ function normalizeSettlement(inputRaw: string): Settlement | null {
   return null;
 }
 
+function normalizeTxHashFromQuery(v: string | null): `0x${string}` | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+
+  // allow basescan URL too (just in case)
+  if (s.includes("basescan.org/tx/")) {
+    const hash = s.split("/tx/")[1]?.split(/[?#]/)[0]?.trim();
+    if (hash && /^0x[a-fA-F0-9]{64}$/.test(hash)) return hash as `0x${string}`;
+    return null;
+  }
+
+  if (/^0x[a-fA-F0-9]{64}$/.test(s)) return s as `0x${string}`;
+  return null;
+}
+
 export default function PaymentReceipt() {
   const params = useParams();
   const id = params?.id as string | undefined;
+
+  const router = useRouter();
+  const sp = useSearchParams();
 
   const [rec, setRec] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +75,10 @@ export default function PaymentReceipt() {
 
   // ✅ usdc.bot handoff state
   const [handoffing, setHandoffing] = useState(false);
+
+  // ✅ auto-link-on-return state
+  const [autoLinking, setAutoLinking] = useState(false);
+  const autoLinkedOnceRef = useRef(false);
 
   async function refresh() {
     if (!id) return;
@@ -154,9 +176,7 @@ export default function PaymentReceipt() {
         body: JSON.stringify({
           paymentId: rec.id,
           fields: {
-            // ✅ human-friendly input (device.eth / name.base / 0x...)
             beneficiaryInput,
-            // ✅ canonical resolved address when valid
             beneficiaryAddress,
             amount,
             memo,
@@ -176,6 +196,86 @@ export default function PaymentReceipt() {
       setHandoffing(false);
     }
   }
+
+  // ✅ NEW: Auto-link if we were redirected back with ?txHash=...
+  useEffect(() => {
+    if (!id) return;
+    if (!rec) return;
+
+    // Only run once per mount
+    if (autoLinkedOnceRef.current) return;
+
+    // Already linked? nothing to do
+    if (rec?.status === "linked" || rec?.status === "settled" || rec?.settlement) {
+      // still strip txHash param if it's hanging around
+      const tx = sp.get("txHash");
+      if (tx) {
+        const u = new URL(window.location.href);
+        u.searchParams.delete("txHash");
+        u.searchParams.delete("paymentId");
+        u.searchParams.delete("from");
+        router.replace(u.pathname + (u.search ? `?${u.searchParams.toString()}` : ""));
+      }
+      return;
+    }
+
+    const txHash = normalizeTxHashFromQuery(sp.get("txHash"));
+    if (!txHash) return;
+
+    autoLinkedOnceRef.current = true;
+
+    let cancelled = false;
+
+    (async () => {
+      setAutoLinking(true);
+      setNotice({ type: "ok", msg: "Linking transaction proof…" });
+
+      try {
+        const res = await fetch(`/api/payments/${id}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ txHash }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.ok) {
+          if (cancelled) return;
+          setNotice({
+            type: "err",
+            msg: json?.error || "Could not auto-link proof. You can still paste the tx hash manually.",
+          });
+          return;
+        }
+
+        if (cancelled) return;
+
+        setNotice({ type: "ok", msg: "Transaction proof linked." });
+
+        // refresh record to show settlement/status
+        await refresh();
+
+        // strip txHash param so refresh doesn't re-run
+        const u = new URL(window.location.href);
+        u.searchParams.delete("txHash");
+        u.searchParams.delete("paymentId");
+        u.searchParams.delete("from");
+        router.replace(u.pathname + (u.searchParams.toString() ? `?${u.searchParams.toString()}` : ""));
+      } catch {
+        if (cancelled) return;
+        setNotice({
+          type: "err",
+          msg: "Network error auto-linking proof. You can still paste the tx hash manually.",
+        });
+      } finally {
+        if (!cancelled) setAutoLinking(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, rec, sp, router]);
 
   if (loading) {
     return (
@@ -225,7 +325,7 @@ export default function PaymentReceipt() {
                 { key: "created", label: "Created", ts: rec?.createdAt, done: true },
                 {
                   key: "linked",
-                  label: "Linked (proof)",
+                  label: autoLinking ? "Linking (proof)..." : "Linked (proof)",
                   ts: rec?.updatedAt,
                   done: rec?.status === "linked",
                 },
