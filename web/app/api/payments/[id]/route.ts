@@ -23,25 +23,47 @@ async function trIncr(fields: Record<string, number>) {
   }
 }
 
-// -------------------- CORS (NEW) --------------------
+// -------------------- CORS (HARDENED) --------------------
 
-// If you later want to lock this down, replace "*" with "https://usdc.bot" and/or "https://www.usdc.bot"
-const CORS_ALLOW_ORIGIN = "*";
+// For your setup: allow usdc.bot to POST to payments.chat.
+// You can keep "*" during dev, but production is safer locked to known origins.
+const ALLOWLIST = new Set<string>([
+  "https://usdc.bot",
+  "https://www.usdc.bot",
+  "https://payments.chat",
+  "https://www.payments.chat",
+  // Optional: local dev
+  "http://localhost:3000",
+  "http://localhost:3001",
+]);
+
+function getCorsOrigin(req: Request): string {
+  const origin = req.headers.get("origin") || "";
+  if (!origin) return "*"; // non-browser / curl
+  return ALLOWLIST.has(origin) ? origin : "*";
+}
+
 const CORS_ALLOW_METHODS = "GET,POST,PATCH,OPTIONS";
 const CORS_ALLOW_HEADERS = "content-type, authorization";
+const CORS_MAX_AGE = "86400";
 
-function withCors(res: NextResponse) {
-  res.headers.set("access-control-allow-origin", CORS_ALLOW_ORIGIN);
+function withCors(req: Request, res: NextResponse) {
+  // IMPORTANT: If you ever set credentials=true, you cannot use "*" for origin.
+  const origin = getCorsOrigin(req);
+
+  res.headers.set("access-control-allow-origin", origin);
   res.headers.set("access-control-allow-methods", CORS_ALLOW_METHODS);
   res.headers.set("access-control-allow-headers", CORS_ALLOW_HEADERS);
-  // helps caches not mix origins
+  res.headers.set("access-control-max-age", CORS_MAX_AGE);
+  // Make sure caches don't mix responses across origins
   res.headers.set("vary", "origin");
+
   return res;
 }
 
-export async function OPTIONS() {
-  // Preflight response
-  return withCors(new NextResponse(null, { status: 204 }));
+export async function OPTIONS(req: Request) {
+  // Preflight response (must include CORS headers)
+  return withCors(req, new NextResponse(null, { status: 204 }));
 }
 
 // -------------------- Settlement normalization (existing) --------------------
@@ -130,29 +152,33 @@ function normalizeTxHash(input: any): `0x${string}` | null {
 }
 
 function getUsdcAddress(): `0x${string}` | null {
-  const v =
-    process.env.USDC_BASE?.trim() ||
-    process.env.NEXT_PUBLIC_USDC_BASE?.trim() || // fallback only
-    "";
+  const v = (process.env.USDC_BASE || process.env.NEXT_PUBLIC_USDC_BASE || "").trim();
   if (!/^0x[a-fA-F0-9]{40}$/.test(v)) return null;
   return v as `0x${string}`;
 }
 
 function getBaseRpcUrl(): string | null {
-  const v =
-    process.env.BASE_RPC_URL?.trim() ||
-    process.env.NEXT_PUBLIC_BASE_RPC_URL?.trim() || // fallback only
-    "";
+  const v = (process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL || "").trim();
   return v || null;
 }
 
 // -------------------- Routes --------------------
 
-export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  const rec = await kv.get(KEY(id));
-  if (!rec) return withCors(NextResponse.json({ error: "Not found" }, { status: 404 }));
-  return withCors(NextResponse.json(rec, { status: 200 }));
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params;
+    const rec = await kv.get(KEY(id));
+    if (!rec) return withCors(req, NextResponse.json({ error: "Not found" }, { status: 404 }));
+    return withCors(req, NextResponse.json(rec, { status: 200 }));
+  } catch (err: any) {
+    return withCors(
+      req,
+      NextResponse.json(
+        { error: "Server error", detail: String(err?.message ?? err) },
+        { status: 500 }
+      )
+    );
+  }
 }
 
 /**
@@ -174,6 +200,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     if (!rl.ok) {
       return withCors(
+        req,
         NextResponse.json(
           { error: "Rate limit exceeded. Try again soon." },
           { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
@@ -183,19 +210,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     const body = (await req.json().catch(() => ({}))) as any;
     const txHash = normalizeTxHash(body?.txHash);
-    if (!txHash) return withCors(NextResponse.json({ error: "Missing/invalid txHash" }, { status: 400 }));
+    if (!txHash) {
+      return withCors(req, NextResponse.json({ error: "Missing/invalid txHash" }, { status: 400 }));
+    }
 
     const existing: any = await kv.get(KEY(id));
-    if (!existing) return withCors(NextResponse.json({ error: "Not found" }, { status: 404 }));
+    if (!existing) return withCors(req, NextResponse.json({ error: "Not found" }, { status: 404 }));
 
     // Idempotent
     if (existing?.status === "linked" || existing?.status === "settled") {
-      return withCors(NextResponse.json({ ok: true, alreadyLinked: true }, { status: 200 }));
+      return withCors(req, NextResponse.json({ ok: true, alreadyLinked: true }, { status: 200 }));
     }
 
     const payeeAddr = String(existing?.payee?.address ?? "").trim();
     if (!/^0x[a-fA-F0-9]{40}$/.test(payeeAddr)) {
       return withCors(
+        req,
         NextResponse.json({ error: "Payment record missing payee.address" }, { status: 400 })
       );
     }
@@ -205,12 +235,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     try {
       expected = parseUnits(amountStr, 6);
     } catch {
-      return withCors(NextResponse.json({ error: "Payment record has invalid amount" }, { status: 400 }));
+      return withCors(
+        req,
+        NextResponse.json({ error: "Payment record has invalid amount" }, { status: 400 })
+      );
     }
 
     const USDC_ADDR = getUsdcAddress();
     if (!USDC_ADDR) {
       return withCors(
+        req,
         NextResponse.json(
           { error: "Server misconfig: missing USDC_BASE (Base USDC token address)" },
           { status: 500 }
@@ -225,20 +259,27 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     });
 
     const receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
-    if (!receipt) return withCors(NextResponse.json({ error: "Transaction not found yet" }, { status: 400 }));
+    if (!receipt) {
+      return withCors(req, NextResponse.json({ error: "Transaction not found yet" }, { status: 400 }));
+    }
     if (receipt.status !== "success") {
-      return withCors(NextResponse.json({ error: "Transaction failed" }, { status: 400 }));
+      return withCors(req, NextResponse.json({ error: "Transaction failed" }, { status: 400 }));
     }
 
     const usdcLogs = receipt.logs.filter(
       (l) => String(l.address).toLowerCase() === String(USDC_ADDR).toLowerCase()
     );
 
-    const parsed = parseEventLogs({
-      abi: ERC20_TRANSFER_ABI,
-      logs: usdcLogs,
-      eventName: "Transfer",
-    });
+    let parsed: any[] = [];
+    try {
+      parsed = parseEventLogs({
+        abi: ERC20_TRANSFER_ABI,
+        logs: usdcLogs,
+        eventName: "Transfer",
+      }) as any[];
+    } catch {
+      parsed = [];
+    }
 
     const match = parsed.find((ev: any) => {
       const to = String(ev.args?.to ?? "").toLowerCase();
@@ -248,6 +289,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     if (!match) {
       return withCors(
+        req,
         NextResponse.json(
           { error: "No matching USDC Transfer found for this payment (to/amount mismatch)" },
           { status: 400 }
@@ -270,9 +312,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       await trIncr({ proofsLinked: 1 });
     }
 
-    return withCors(NextResponse.json({ ok: true, linked: true, txHash }, { status: 200 }));
+    return withCors(req, NextResponse.json({ ok: true, linked: true, txHash }, { status: 200 }));
   } catch (err: any) {
     return withCors(
+      req,
       NextResponse.json(
         { error: "Server error", detail: String(err?.message ?? err) },
         { status: 500 }
@@ -295,6 +338,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     if (!rl.ok) {
       return withCors(
+        req,
         NextResponse.json(
           { error: "Rate limit exceeded. Try again soon." },
           { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }
@@ -302,12 +346,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       );
     }
 
-    const body = await req.json().catch(() => ({} as any));
+    const body = (await req.json().catch(() => ({} as any))) as any;
     const existing: any = await kv.get(KEY(id));
-    if (!existing) return withCors(NextResponse.json({ error: "Not found" }, { status: 404 }));
+    if (!existing) return withCors(req, NextResponse.json({ error: "Not found" }, { status: 404 }));
 
     const settlement = normalizeSettlement(body?.settlement ?? body?.proof);
-    if (!settlement) return withCors(NextResponse.json({ error: "Invalid settlement" }, { status: 400 }));
+    if (!settlement) {
+      return withCors(req, NextResponse.json({ error: "Invalid settlement" }, { status: 400 }));
+    }
 
     const prevStatus = String(existing?.status ?? "proposed");
 
@@ -324,9 +370,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       await trIncr({ proofsLinked: 1 });
     }
 
-    return withCors(NextResponse.json({ ok: true }, { status: 200 }));
+    return withCors(req, NextResponse.json({ ok: true }, { status: 200 }));
   } catch (err: any) {
     return withCors(
+      req,
       NextResponse.json(
         { error: "Server error", detail: String(err?.message ?? err) },
         { status: 500 }
